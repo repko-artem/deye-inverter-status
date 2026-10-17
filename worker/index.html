@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Статус енергопостачання | ОСББ "Новодарницьке"</title>
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #0b1120;
+      --card-bg: rgba(30, 41, 59, 0.7);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --accent: #8b5cf6;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background: radial-gradient(circle at 50% 0%, #1e293b, var(--bg) 80%);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* HEADER */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 4px;
+    }
+
+    .logo-block {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo-img {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      object-fit: cover;
+      border: 1px solid var(--card-border);
+      background: #fff;
+    }
+
+    .title-block h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .title-block p {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+    }
+
+    .live-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #10b981;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    /* CARD STYLES */
+    .card {
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+    }
+
+    /* MAIN STATUS BANNER */
+    .status-banner {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      border-left: 5px solid var(--danger);
+      transition: all 0.3s ease;
+    }
+
+    .status-banner.grid-on {
+      border-left-color: var(--success);
+    }
+
+    .status-icon-wrap {
+      width: 50px;
+      height: 50px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.6rem;
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--danger);
+      flex-shrink: 0;
+    }
+
+    .status-banner.grid-on .status-icon-wrap {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+    }
+
+    .status-info h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .status-info p {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    /* BATTERY & FORECAST HERO */
+    .battery-hero {
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .gauge-wrapper {
+      position: relative;
+      width: 190px;
+      height: 190px;
+      margin: 10px auto 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .gauge-svg {
+      transform: rotate(-90deg);
+      width: 100%;
+      height: 100%;
+    }
+
+    .gauge-bg {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.08);
+      stroke-width: 12;
+    }
+
+    .gauge-progress {
+      fill: none;
+      stroke: var(--primary);
+      stroke-width: 12;
+      stroke-linecap: round;
+      stroke-dasharray: 502;
+      stroke-dashoffset: 125; /* 75% default */
+      transition: stroke-dashoffset 1s ease-in-out, stroke 0.5s ease;
+    }
+
+    .gauge-text {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .gauge-val {
+      font-size: 2.8rem;
+      font-weight: 800;
+      letter-spacing: -1px;
+      line-height: 1;
+    }
+
+    .gauge-unit {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    .gauge-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    .forecast-box {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 16px;
+      padding: 16px;
+      margin-top: 8px;
+    }
+
+    .forecast-title {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+
+    .forecast-main {
+      font-size: 1.55rem;
+      font-weight: 800;
+      color: #60a5fa;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .forecast-sub {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    .forecast-sub strong {
+      color: var(--text-main);
+    }
+
+    /* GRID OF METRICS */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .metric-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .metric-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    .metric-value {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .metric-sub {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    /* CRITICAL SERVICES LIST */
+    .services-header {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .services-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .service-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: rgba(15, 23, 42, 0.4);
+      border-radius: 12px;
+      font-size: 0.85rem;
+    }
+
+    .service-info {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .service-icon {
+      font-size: 1.1rem;
+    }
+
+    .service-tag {
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      font-weight: 600;
+    }
+
+    /* CHART SECTION */
+    .chart-container {
+      width: 100%;
+      height: 170px;
+      margin-top: 10px;
+    }
+
+    /* TIPS SECTION */
+    .tip-box {
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px solid rgba(245, 158, 11, 0.2);
+      border-radius: 16px;
+      padding: 14px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .tip-icon {
+      font-size: 1.3rem;
+      color: var(--warning);
+      flex-shrink: 0;
+    }
+
+    .tip-text {
+      font-size: 0.82rem;
+      line-height: 1.4;
+      color: #fef3c7;
+    }
+
+    /* FOOTER */
+    .footer {
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      padding: 16px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .refresh-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--card-border);
+      color: var(--text-main);
+      padding: 8px 16px;
+      border-radius: 10px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 4px auto 0;
+      transition: background 0.2s;
+    }
+
+    .refresh-btn:active {
+      background: rgba(255, 255, 255, 0.15);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <!-- HEADER -->
+    <header class="header">
+      <div class="logo-block">
+        <img src="logo.png" alt="ОСББ" class="logo-img" onerror="this.style.display='none'">
+        <div class="title-block">
+          <h1>ОСББ «Новодарницьке»</h1>
+          <p>Система енергонезалежності Deye 50kW</p>
+        </div>
+      </div>
+      <div class="live-badge">
+        <div class="live-dot"></div>
+        LIVE
+      </div>
+    </header>
+
+    <!-- STATUS BANNER -->
+    <section class="card status-banner" id="statusBanner">
+      <div class="status-icon-wrap" id="statusIcon">⚡</div>
+      <div class="status-info">
+        <h2 id="statusTitle">Живлення від батареї (Off-grid)</h2>
+        <p id="statusSubtitle">Відключення триває вже 2 год 45 хв (з 18:15)</p>
+      </div>
+    </section>
+
+    <!-- HERO BATTERY & FORECAST -->
+    <section class="card battery-hero">
+      <div class="gauge-wrapper">
+        <svg class="gauge-svg" viewBox="0 0 180 180">
+          <circle class="gauge-bg" cx="90" cy="90" r="80"></circle>
+          <circle class="gauge-progress" id="gaugeProgress" cx="90" cy="90" r="80"></circle>
+        </svg>
+        <div class="gauge-text">
+          <div><span class="gauge-val" id="socValue">75</span><span class="gauge-unit">%</span></div>
+          <div class="gauge-sub" id="voltageValue">631.1 В • 50 кВт</div>
+        </div>
+      </div>
+
+      <div class="forecast-box">
+        <div class="forecast-title">⏳ Прогноз автономності будинку</div>
+        <div class="forecast-main">
+          <span>~</span><span id="forecastHours">9 год 10 хв</span>
+        </div>
+        <div class="forecast-sub">
+          Заряду вистачить орієнтовно до <strong id="forecastEndTime">06:10 ранку</strong>
+        </div>
+      </div>
+    </section>
+
+    <!-- METRICS GRID -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Поточне навантаження</div>
+        <div class="metric-value"><span id="powerValue">4.5</span> <small style="font-size:0.8rem">кВт</small></div>
+        <div class="metric-sub" id="loadStatusLabel">Помірне (до 10 кВт)</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Витрачено з батареї</div>
+        <div class="metric-value"><span id="dischargeValue">20.0</span> <small style="font-size:0.8rem">кВт·год</small></div>
+        <div class="metric-sub">За сьогоднішній день</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Ємність батареї</div>
+        <div class="metric-value">~65 <small style="font-size:0.8rem">кВт·год</small></div>
+        <div class="metric-sub">Високовольтний блок</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Швидкість розряду</div>
+        <div class="metric-value">~9.6 <small style="font-size:0.8rem">%/год</small></div>
+        <div class="metric-sub">При поточному темпі</div>
+      </div>
+    </section>
+
+
+
+    <!-- CHART CARD -->
+    <section class="card">
+      <div style="font-size:0.85rem; font-weight:600; color:var(--text-muted); margin-bottom:8px;">
+        ДИНАМІКА РОЗРЯДУ СЬОГОДНІ (кВт)
+      </div>
+      <div class="chart-container">
+        <canvas id="dischargeChart"></canvas>
+      </div>
+    </section>
+
+    <!-- TIP BOX FOR RESIDENTS -->
+    <section class="tip-box">
+      <div class="tip-icon">💡</div>
+      <div class="tip-text">
+        <strong>Порада для мешканців:</strong> Батарея надійно живить насоси та ліфти. Якщо є змога піднятися пішки на нижні поверхи — це подовжує час автономного водопостачання для всього будинку.
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <div>Останнє оновлення даних: <strong id="lastUpdate">20:56</strong></div>
+      <button class="refresh-btn" onclick="fetchStatus()">
+        🔄 Оновити дані
+      </button>
+      <div style="margin-top: 8px; opacity: 0.6;">ОСББ «Новодарницьке» • Deye Cloud Integration</div>
+    </footer>
+  </div>
+
+  <script>
+    let dischargeChartInstance = null;
+
+    // Default fallback state (matches latest live reading)
+    const state = {
+      is_grid_on: false,
+      outage_start: "18:15",
+      outage_duration_min: 165,
+      battery_soc: 75,
+      battery_voltage: 631.1,
+      battery_power_w: 3670,
+      use_power_w: 4531,
+      today_discharge_kwh: 20.0,
+      nominal_capacity_kwh: 65.0,
+      updated_at: "20:56"
+    };
+
+    function updateUI(data) {
+      // SOC & Gauge calculation (Circumference 2 * PI * 80 = ~502)
+      const circumference = 502;
+      const soc = Math.max(0, Math.min(100, data.battery_soc));
+      const offset = circumference - (soc / 100) * circumference;
+      
+      const gauge = document.getElementById('gaugeProgress');
+      gauge.style.strokeDashoffset = offset;
+      
+      // Dynamic colors based on SOC
+      if (soc > 50) {
+        gauge.style.stroke = '#3b82f6'; // Blue
+      } else if (soc > 25) {
+        gauge.style.stroke = '#f59e0b'; // Orange
+      } else {
+        gauge.style.stroke = '#ef4444'; // Red
+      }
+
+      document.getElementById('socValue').textContent = soc;
+      document.getElementById('voltageValue').textContent = `${data.battery_voltage.toFixed(1)} В • 50 кВт`;
+      document.getElementById('powerValue').textContent = (data.use_power_w / 1000).toFixed(1);
+      document.getElementById('dischargeValue').textContent = data.today_discharge_kwh.toFixed(1);
+
+      // Status banner
+      const banner = document.getElementById('statusBanner');
+      const icon = document.getElementById('statusIcon');
+      const title = document.getElementById('statusTitle');
+      const sub = document.getElementById('statusSubtitle');
+
+      if (data.is_grid_on) {
+        banner.className = 'card status-banner grid-on';
+        icon.textContent = '🟢';
+        title.textContent = 'Міська мережа активна';
+        sub.textContent = 'Батарея в режимі очікування / заряджання';
+        document.getElementById('forecastHours').textContent = 'Повний резерв';
+        document.getElementById('forecastEndTime').textContent = 'мережа активна';
+      } else {
+        banner.className = 'card status-banner';
+        icon.textContent = '⚡';
+        title.textContent = 'Живлення від батареї (Off-grid)';
+        
+        const durHours = Math.floor(data.outage_duration_min / 60);
+        const durMins = data.outage_duration_min % 60;
+        sub.textContent = `Відключення триває вже ${durHours > 0 ? durHours + ' год ' : ''}${durMins} хв (з ${data.outage_start})`;
+
+        // Forecast estimation:
+        // Usable capacity: from current SOC down to 10% reserve
+        const usableCapacityKwh = data.nominal_capacity_kwh * ((soc - 10) / 100);
+        const currentKw = Math.max(1.5, data.use_power_w / 1000);
+        const hoursRemaining = Math.max(0, usableCapacityKwh / currentKw);
+
+        const remH = Math.floor(hoursRemaining);
+        const remM = Math.round((hoursRemaining - remH) * 60);
+        document.getElementById('forecastHours').textContent = `${remH} год ${remM} хв`;
+
+        // Calculate end time
+        const now = new Date();
+        const endTime = new Date(now.getTime() + hoursRemaining * 3600 * 1000);
+        const endStr = endTime.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('forecastEndTime').textContent = `${endStr} (${endTime.getDate() !== now.getDate() ? 'ранку' : 'сьогодні'})`;
+      }
+
+      document.getElementById('lastUpdate').textContent = data.updated_at;
+    }
+
+    function initChart() {
+      const ctx = document.getElementById('dischargeChart').getContext('2d');
+      const labels = ['18:15', '18:30', '18:45', '19:00', '19:15', '19:30', '19:45', '20:00', '20:15', '20:30', '20:45', '21:00', '21:15', '21:18'];
+      const powerData = [3.3, 6.0, 9.7, 8.9, 3.8, 7.3, 3.2, 3.9, 6.0, 7.4, 11.2, 4.5, 8.8, 3.6];
+      const socData = [100, 99, 96, 93, 90, 88, 85, 83, 81, 79, 76, 75, 72, 71];
+
+      dischargeChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Потужність батареї (кВт)',
+              data: powerData,
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59, 130, 246, 0.2)',
+              fill: true,
+              tension: 0.35,
+              borderWidth: 2.5,
+              pointRadius: 3,
+              pointHoverRadius: 6,
+              pointBackgroundColor: '#60a5fa',
+              yAxisID: 'y'
+            },
+            {
+              label: 'Заряд АКБ (%)',
+              data: socData,
+              borderColor: '#10b981',
+              borderDash: [4, 4],
+              borderWidth: 2,
+              pointRadius: 2,
+              fill: false,
+              yAxisID: 'y1'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: true,
+              labels: { color: '#94a3b8', boxWidth: 12, font: { size: 10 } }
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { color: '#94a3b8', font: { size: 10 } }
+            },
+            y: {
+              title: { display: true, text: 'кВт', color: '#94a3b8', font: { size: 10 } },
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { color: '#94a3b8', font: { size: 10 } },
+              beginAtZero: true
+            },
+            y1: {
+              position: 'right',
+              title: { display: true, text: '%', color: '#10b981', font: { size: 10 } },
+              grid: { drawOnChartArea: false },
+              ticks: { color: '#10b981', font: { size: 10 } },
+              min: 60,
+              max: 100
+            }
+          }
+        }
+      });
+    }
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('status.json?t=' + Date.now());
+        if (res.ok) {
+          const freshData = await res.json();
+          updateUI(freshData);
+        } else {
+          updateUI(state);
+        }
+      } catch (err) {
+        // Fallback to local state if accessed via file:// without webserver
+        updateUI(state);
+      }
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      fetchStatus();
+      // Auto-refresh every 30 seconds
+      setInterval(fetchStatus, 30000);
+    });
+  </script>
+</body>
+</html>

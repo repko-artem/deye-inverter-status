@@ -1,0 +1,18 @@
+{
+  "updated_at": "2026-10-07 20:56:35",
+  "is_grid_on": false,
+  "outage_start": "18:15",
+  "outage_duration_min": 165,
+  "battery_soc": 75,
+  "battery_voltage": 631.1,
+  "battery_power_w": 3670,
+  "use_power_w": 4531,
+  "today_discharge_kwh": 20.0,
+  "today_charge_kwh": 3.0,
+  "today_consumption_kwh": 55.0,
+  "nominal_capacity_kwh": 65.0,
+  "est_hours_remaining": 9.3,
+  "est_time_until": "06:15",
+  "est_hours_at_avg": 7.5,
+  "load_status": "Помірне (4.5 кВт)"
+}

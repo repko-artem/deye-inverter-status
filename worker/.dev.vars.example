@@ -1,0 +1,12 @@
+# Cloudflare Worker Local Development Variables & Secrets
+# Copy this file to .dev.vars for local testing with "npx wrangler dev":
+#   cp .dev.vars.example .dev.vars
+#
+# For production deployment, configure secrets via Wrangler CLI:
+#   npx wrangler secret put DEYE_STATION_ID
+#   npx wrangler secret put DEYE_TOKEN
+#   npx wrangler secret put DEYE_API_BASE
+
+DEYE_STATION_ID="12345678"
+DEYE_TOKEN="your_deye_jwt_token_here"
+DEYE_API_BASE="https://your-deye-proxy.vercel.app"

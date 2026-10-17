@@ -1,0 +1,7 @@
+{
+  "name": "deye-proxy",
+  "version": "1.0.0",
+  "description": "Serverless reverse proxy relay for Deye Cloud API (CORS & WAF bypass)",
+  "main": "api/proxy.js",
+  "private": true
+}
