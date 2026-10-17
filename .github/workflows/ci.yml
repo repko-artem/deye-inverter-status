@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test & Security Audit
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Unit Tests & Secrets Scanner
+        run: npm test
+
+      - name: Verify Python Script Syntax
+        run: python -m py_compile local/updater.py
+
+      - name: Secrets Leak Detection
+        run: |
+          echo "Scanning for accidental secrets or tokens..."
+          # Fail if any raw JWT or Cloudflare tokens are found in tracked files
+          ! grep -rE "eyJ[a-zA-Z0-9_\-]{30,}\.[a-zA-Z0-9_\-]{30,}" --exclude-dir=".git" --exclude-dir="node_modules" --exclude="security.test.js" .
+          ! grep -rE "cfut_[a-zA-Z0-9_\-]{30,}" --exclude-dir=".git" --exclude-dir="node_modules" --exclude="security.test.js" .
+          echo "Security audit passed: No secrets detected."

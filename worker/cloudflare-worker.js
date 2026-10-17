@@ -964,3 +964,9 @@ function renderHTML(data) {
 </body>
 </html>`;
 }
+
+export {
+  analyzeMultiDayOutages,
+  buildOutageChart,
+  renderHTML
+};
