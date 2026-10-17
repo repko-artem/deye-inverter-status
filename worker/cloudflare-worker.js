@@ -68,21 +68,32 @@ export default {
     const cacheAgeSec = Math.round((Date.now() - inMemoryTimestamp) / 1000);
     let response;
 
+    const securityHeaders = {
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Permissions-Policy": "geolocation=(), camera=(), microphone=()"
+    };
+
+    const baseHeaders = {
+      ...securityHeaders,
+      "Cache-Control": "public, max-age=60, s-maxage=60, stale-while-revalidate=30",
+      "X-Server-Cache-Age": cacheAgeSec.toString()
+    };
+
     if (isApi) {
       response = new Response(JSON.stringify(data), {
         headers: {
+          ...baseHeaders,
           "Content-Type": "application/json; charset=utf-8",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=60, s-maxage=60, stale-while-revalidate=30",
-          "X-Server-Cache-Age": cacheAgeSec.toString()
+          "Access-Control-Allow-Origin": "*"
         }
       });
     } else {
       response = new Response(renderHTML(data), {
         headers: {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "public, max-age=60, s-maxage=60, stale-while-revalidate=30",
-          "X-Server-Cache-Age": cacheAgeSec.toString()
+          ...baseHeaders,
+          "Content-Type": "text/html; charset=utf-8"
         }
       });
     }

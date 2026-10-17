@@ -7,7 +7,18 @@ module.exports = async (req, res) => {
     return res.status(204).end();
   }
 
-  const targetUrl = 'https://www.deyecloud.com' + req.url;
+  const rawUrl = req.url || '/';
+
+  // Security: Protect against SSRF and open proxy abuse
+  if (!rawUrl.startsWith('/') || rawUrl.startsWith('//') || rawUrl.includes('\\') || rawUrl.includes('@')) {
+    return res.status(400).json({ error: 'Bad Request', message: 'Malformed URL path' });
+  }
+
+  if (!rawUrl.startsWith('/maintain-s/')) {
+    return res.status(403).json({ error: 'Forbidden', message: 'Restricted endpoint' });
+  }
+
+  const targetUrl = 'https://www.deyecloud.com' + rawUrl;
   
   const headers = {
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',

@@ -37,4 +37,44 @@ describe('Vercel Proxy Relay (proxy.js)', () => {
     assert.equal(headersSet['access-control-allow-methods'], 'GET, POST, OPTIONS');
     assert.equal(ended, true);
   });
+
+  test('rejects malformed or SSRF attempt paths with 400 Bad Request', async () => {
+    const maliciousPaths = ['//@evil.com', '//169.254.169.254', '/test\\evil', '@evil.com'];
+
+    for (const badPath of maliciousPaths) {
+      let statusSet = 0;
+      let jsonSent = null;
+
+      const mockReq = { method: 'GET', url: badPath, headers: {} };
+      const mockRes = {
+        setHeader() {},
+        status(s) { statusSet = s; return this; },
+        json(d) { jsonSent = d; }
+      };
+
+      await proxyHandler(mockReq, mockRes);
+      assert.equal(statusSet, 400, `Path ${badPath} should be rejected with 400`);
+      assert.equal(jsonSent.error, 'Bad Request');
+    }
+  });
+
+  test('blocks non-whitelisted API endpoints with 403 Forbidden', async () => {
+    const forbiddenPaths = ['/admin/config', '/api/users', '/oauth/token'];
+
+    for (const badPath of forbiddenPaths) {
+      let statusSet = 0;
+      let jsonSent = null;
+
+      const mockReq = { method: 'GET', url: badPath, headers: {} };
+      const mockRes = {
+        setHeader() {},
+        status(s) { statusSet = s; return this; },
+        json(d) { jsonSent = d; }
+      };
+
+      await proxyHandler(mockReq, mockRes);
+      assert.equal(statusSet, 403, `Path ${badPath} should be rejected with 403`);
+      assert.equal(jsonSent.error, 'Forbidden');
+    }
+  });
 });

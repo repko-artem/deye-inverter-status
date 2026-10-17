@@ -42,3 +42,8 @@ jobs:
           ! grep -rE "eyJ[a-zA-Z0-9_\-]{30,}\.[a-zA-Z0-9_\-]{30,}" --exclude-dir=".git" --exclude-dir="node_modules" --exclude="security.test.js" .
           ! grep -rE "cfut_[a-zA-Z0-9_\-]{30,}" --exclude-dir=".git" --exclude-dir="node_modules" --exclude="security.test.js" .
           echo "Security audit passed: No secrets detected."
+
+      - name: Dependency Vulnerability Audit (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit -r local/requirements.txt

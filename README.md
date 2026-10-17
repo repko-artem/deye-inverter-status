@@ -1,6 +1,7 @@
 # Deye Inverter Real-Time Status & Blackout Monitor ⚡🔋
 
 [![CI](https://github.com/repko-artem/deye-inverter-status/actions/workflows/ci.yml/badge.svg)](https://github.com/repko-artem/deye-inverter-status/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/repko-artem/deye-inverter-status/actions/workflows/codeql.yml/badge.svg)](https://github.com/repko-artem/deye-inverter-status/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A lightweight, serverless monitoring system and public status page for **Deye** hybrid solar/battery inverters (tested on high-voltage 50 kW commercial installations and residential systems).
