@@ -2,6 +2,10 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function getFilesRecursively(dir) {
   let results = [];
@@ -20,7 +24,7 @@ function getFilesRecursively(dir) {
 }
 
 describe('Security & Secrets Leak Prevention', () => {
-  const rootDir = path.resolve(import.meta.dirname, '..');
+  const rootDir = path.resolve(__dirname, '..');
   const allFiles = getFilesRecursively(rootDir);
 
   test('no sensitive env files (.dev.vars, .env) are present in the repo', () => {
