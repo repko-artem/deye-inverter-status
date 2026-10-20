@@ -258,8 +258,12 @@ async function getFreshTelemetry(env = {}) {
     }
     const statNightKw = Math.round(statNightKwVal * 10) / 10;
 
-    // Якщо зараз триває відключення і поточне навантаження вище статистичного середнього — враховуємо його
-    const realisticKw = Math.max(statActiveKw, use_power_kw);
+    // Коли мережа активна — оцінюємо готовність за стабільною денною/нічною статистикою блекаутів.
+    // Під час блекауту — згладжуємо короткочасні пускові струми ліфтів/насосів (враховуємо їхній змінний цикл роботи).
+    let realisticKw = statActiveKw;
+    if (!is_grid_on && use_power_kw > statActiveKw) {
+      realisticKw = statActiveKw + (use_power_kw - statActiveKw) * 0.35;
+    }
     const nightKw = statNightKw;
 
     const usableSoc = Math.max(0, soc - 15);
