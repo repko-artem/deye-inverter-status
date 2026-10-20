@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy } from '../worker/cloudflare-worker.js';
+import { analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy, getFreshTelemetry } from '../worker/cloudflare-worker.js';
 
 describe('Outage Journal Analysis (analyzeMultiDayOutages)', () => {
   test('returns empty summary when records array is empty', () => {
@@ -154,5 +154,82 @@ describe('Autonomy Estimation (calculateAutonomy)', () => {
     assert.equal(result.remH_cons, 0);
     assert.equal(result.remH_opt, 0);
     assert.equal(result.est_hours_formatted, '0 – 0 год');
+  });
+
+  test('returns all essential estimation fields including hoursConservative', () => {
+    const result = calculateAutonomy(80, true, 3.0, 3.5, 2.0);
+    assert.equal(typeof result.hoursConservative, 'number');
+    assert.ok(result.hoursConservative > 0);
+    assert.equal(typeof result.hoursNight, 'number');
+    assert.equal(typeof result.est_hours_formatted, 'string');
+    assert.equal(typeof result.est_time_until, 'string');
+  });
+});
+
+describe('Full Telemetry Flow (getFreshTelemetry)', () => {
+  test('successfully processes telemetry and computes fields without throwing ReferenceError', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 100,
+              batteryBv: 653.9,
+              gridRelayStatus: 'on',
+              wirePower: 14500,
+              batteryPower: -6400,
+              batteryStatus: 'CHARGE',
+              usePower: 2500
+            })
+          };
+        }
+        if (urlStr.includes('/maintain-s/history/batteryPower/')) {
+          const nowSec = Math.floor(Date.now() / 1000);
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              records: [
+                { dateTime: nowSec - 7200, wirePower: 5000, batteryPower: 0, usePower: 2000, batterySoc: 100 },
+                { dateTime: nowSec - 5400, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 98 },
+                { dateTime: nowSec - 4800, wirePower: 0, batteryPower: 3600, usePower: 3600, batterySoc: 96 },
+                { dateTime: nowSec - 4200, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 94 },
+                { dateTime: nowSec - 3600, wirePower: 6000, batteryPower: -2000, usePower: 2200, batterySoc: 95 }
+              ]
+            })
+          };
+        }
+        return { ok: false, status: 404, text: async () => "{}" };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com'
+      };
+
+      const data = await getFreshTelemetry(env);
+
+      // Verify that no internal error occurred (no ReferenceError caught)
+      assert.equal(data.worker_error, undefined, `Expected no worker_error, but got: ${data.worker_error}`);
+      assert.equal(data.battery_soc, 100, 'Expected real SOC 100%, not the emergency fallback 76%');
+      assert.equal(data.is_charging, true);
+      assert.equal(typeof data.est_hours_remaining, 'number');
+      assert.ok(data.est_hours_remaining > 0);
+      assert.ok(data.journal);
+      assert.ok(data.journal.events.length > 0);
+      assert.ok(data.outages.length > 0, 'Outage events must be populated');
+
+      // Verify that HTML renders cleanly with this data
+      const html = renderHTML(data);
+      assert.ok(html.includes('100%'), 'HTML must include 100%');
+      assert.ok(!html.includes('undefined'));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
