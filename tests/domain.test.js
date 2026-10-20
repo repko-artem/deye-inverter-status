@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { CONFIG } from '../worker/config.js';
-import { isOutageRecord, calculateDischargeRate, calculate24hDischarge } from '../worker/domain/autonomy.js';
+import { isOutageRecord, calculateDischargeRate, calculate24hDischarge, simulateTimelineAutonomy } from '../worker/domain/autonomy.js';
 import { calculateOutageStatistics } from '../worker/domain/outages.js';
 import { TelemetryCache } from '../worker/services/cache.js';
 import { DeyeClient } from '../worker/services/deye-client.js';
@@ -58,6 +58,22 @@ describe('Domain: Autonomy & Outage Detection (DRY / SRP)', () => {
     assert.equal(typeof stats.statNightKw, 'number');
     assert.ok(stats.statActiveKw > 0);
     assert.ok(stats.statNightKw > 0);
+  });
+
+  test('simulateTimelineAutonomy calculates realistic day/night combined transition', () => {
+    // 49.725 kWh usable energy, starts at 14:00 (Kyiv hour 14)
+    // 14:00 to 23:00 = 9h day @ 3.3 kW = 29.7 kWh
+    // Remaining = 20.025 kWh
+    // 23:00 to 07:00 = 8h night @ 2.1 kW = 16.8 kWh
+    // Remaining = 3.225 kWh
+    // 07:00 onwards = day @ 3.3 kW => 3.225 / 3.3 = 0.98h
+    // Total = ~17.98h => Math.round is 18h
+    const startDate = new Date('2026-10-20T14:00:00.000Z');
+    const sim = simulateTimelineAutonomy(49.725, startDate, 3.3, 2.1);
+
+    assert.ok(sim.hours > 17.5 && sim.hours < 18.5, `Expected ~18h, got ${sim.hours}`);
+    assert.equal(Math.round(sim.hours), 18);
+    assert.ok(sim.endDate instanceof Date);
   });
 });
 

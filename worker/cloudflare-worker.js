@@ -7,7 +7,7 @@ import { CONFIG } from './config.js';
 import { globalCache } from './services/cache.js';
 import { TelemetryService } from './services/telemetry-service.js';
 import { renderHTML } from './ui/template.js';
-import { calculateAutonomy, isOutageRecord, calculateDischargeRate, calculate24hDischarge } from './domain/autonomy.js';
+import { calculateAutonomy, isOutageRecord, calculateDischargeRate, calculate24hDischarge, simulateTimelineAutonomy } from './domain/autonomy.js';
 import { analyzeMultiDayOutages, calculateOutageStatistics } from './domain/outages.js';
 import { buildOutageChart } from './ui/chart.js';
 
@@ -94,6 +94,7 @@ export default {
 export {
   CONFIG,
   calculateAutonomy,
+  simulateTimelineAutonomy,
   analyzeMultiDayOutages,
   calculateOutageStatistics,
   buildOutageChart,

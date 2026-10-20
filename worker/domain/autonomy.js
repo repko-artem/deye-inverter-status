@@ -14,6 +14,60 @@ export function isOutageRecord(record, config = CONFIG) {
 }
 
 /**
+ * Симуляція вичерпання заряду батареї за добовим графіком зміни дня і ночі.
+ * Враховує реальний час доби та плавний перехід між денним (~3.3 кВт) та нічним (~2.1 кВт) споживанням.
+ * 
+ * @param {number} usableKwh - Доступна корисна енергія (кВт·год)
+ * @param {Date} startKyivDate - Початковий час за Києвом
+ * @param {number} dayKw - Денне навантаження (кВт)
+ * @param {number} nightKw - Нічне навантаження (кВт)
+ * @param {typeof CONFIG} [config]
+ */
+export function simulateTimelineAutonomy(usableKwh, startKyivDate, dayKw, nightKw, config = CONFIG) {
+  if (usableKwh <= 0 || (dayKw <= 0 && nightKw <= 0)) {
+    return { hours: 0, endDate: new Date(startKyivDate.getTime()) };
+  }
+
+  const { NIGHT_HOUR_START, NIGHT_HOUR_END } = config.THRESHOLDS;
+  let remainingEnergy = usableKwh;
+  let currentMillis = startKyivDate.getTime();
+  const stepMinutes = 15;
+  const stepHours = stepMinutes / 60.0;
+  let elapsedMinutes = 0;
+
+  // Запобіжник від нескінченного циклу (максимум 72 години)
+  const maxSteps = (72 * 60) / stepMinutes;
+  let steps = 0;
+
+  while (remainingEnergy > 0 && steps < maxSteps) {
+    const curDate = new Date(currentMillis);
+    const hour = curDate.getUTCHours();
+    const isNight = (hour >= NIGHT_HOUR_START || hour < NIGHT_HOUR_END);
+    const loadKw = isNight ? nightKw : dayKw;
+
+    const energyConsumed = loadKw * stepHours;
+    if (remainingEnergy <= energyConsumed) {
+      const fraction = remainingEnergy / (energyConsumed || 1);
+      elapsedMinutes += fraction * stepMinutes;
+      currentMillis += fraction * stepMinutes * 60 * 1000;
+      remainingEnergy = 0;
+      break;
+    }
+
+    remainingEnergy -= energyConsumed;
+    elapsedMinutes += stepMinutes;
+    currentMillis += stepMinutes * 60 * 1000;
+    steps++;
+  }
+
+  const hours = elapsedMinutes / 60.0;
+  return {
+    hours,
+    endDate: new Date(currentMillis)
+  };
+}
+
+/**
  * Фізико-математична модель розрахунку автономності будинку.
  * 
  * @param {number} soc - Поточний рівень заряду батареї (%)
@@ -47,14 +101,17 @@ export function calculateAutonomy(
   const usableSoc = Math.max(0, soc - SAFETY_BUFFER_SOC);
   const usableKwh = (NOMINAL_CAPACITY_KWH * (usableSoc / 100.0)) * INVERTER_EFFICIENCY;
 
+  // 1. Консервативна оцінка: якщо весь час триватиме активне денне навантаження
   const hoursConservative = realisticKw > 0 ? Math.max(0, usableKwh / realisticKw) : 0;
   const remH_cons = Math.floor(hoursConservative);
 
-  const hoursNight = nightKw > 0 ? Math.max(0, usableKwh / nightKw) : 0;
-  const remH_opt = Math.floor(hoursNight);
+  // 2. Реалістична оцінка: хронологічна симуляція з урахуванням зміни дня і ночі за годинником
+  const timeline = simulateTimelineAutonomy(usableKwh, now, realisticKw, nightKw, config);
+  const hoursNight = timeline.hours;
+  const remH_opt = Math.round(hoursNight);
 
   const endCons = new Date(now.getTime() + hoursConservative * 3600 * 1000);
-  const endOpt = new Date(now.getTime() + hoursNight * 3600 * 1000);
+  const endOpt = timeline.endDate;
 
   return {
     usableKwh,
@@ -65,7 +122,7 @@ export function calculateAutonomy(
     remH_cons,
     remH_opt,
     est_hours_formatted: `${remH_cons} – ${remH_opt} год`,
-    est_time_until: `${endCons.toISOString().substring(11, 16)} (в економ-режимі до ${endOpt.toISOString().substring(11, 16)})`
+    est_time_until: `${endCons.toISOString().substring(11, 16)} (за добовим циклом до ${endOpt.toISOString().substring(11, 16)})`
   };
 }
 

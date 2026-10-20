@@ -140,21 +140,21 @@ export function renderHTML(data) {
           <div class="forecast-sub">
             Повний заряд орієнтовно о <strong>${data.time_to_full_est}</strong>.<br>
             <span style="opacity:0.85">Поточного резерву вже вистачить на <strong>~${data.est_hours_formatted}</strong> автономії.</span>
-            <div style="font-size:0.68rem; color:var(--text-muted); margin-top:4px; opacity:0.85;">*Розраховано за середнім споживанням блекаутів за останні 3 дні (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} кВт вночі).</div>
+            <div style="font-size:0.68rem; color:var(--text-muted); margin-top:4px; opacity:0.85;">*Розраховано за добовим графіком зміни дня і ночі (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} кВт вночі).</div>
           </div>
         ` : `
           <div class="forecast-title">🔋 РЕЗЕРВ АВТОНОМНОСТІ БУДИНКУ</div>
           <div class="forecast-main">~${data.est_hours_formatted}</div>
           <div class="forecast-sub">
             АКБ повністю заряджено (100%) та готовий до резервного живлення критичних систем будинку (води, опалення, ліфтів та чергового освітлення).
-            <div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; opacity:0.9;">*Орієнтовна оцінка: за середнім споживанням будинку під час блекаутів за останні 3 дні (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} кВт вночі) та буфером АКБ 15%.</div>
+            <div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; opacity:0.9;">*Орієнтовна оцінка: від активного дня до повного добового циклу день/ніч (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} вночі) та буфером 15%.</div>
           </div>
         `) : `
           <div class="forecast-title">⏳ ПРОГНОЗ АВТОНОМНОСТІ БУДИНКУ</div>
           <div class="forecast-main">~${data.est_hours_formatted}</div>
           <div class="forecast-sub">
             Орієнтовно <strong>${data.est_time_until}</strong>
-            <div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; opacity:0.9;">*Орієнтовна оцінка: за середнім споживанням будинку під час блекаутів за останні 3 дні (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} кВт вночі) та буфером АКБ 15%.</div>
+            <div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; opacity:0.9;">*Орієнтовна оцінка: від активного дня до повного добового циклу день/ніч (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} вночі) та буфером 15%.</div>
           </div>
         `}
       </div>

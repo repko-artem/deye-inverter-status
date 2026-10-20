@@ -122,11 +122,11 @@ describe('Autonomy Estimation (calculateAutonomy)', () => {
     assert.equal(result.realisticKw, 3.3);
     assert.equal(result.nightKw, 2.1);
     // Usable energy: 65 kWh * 85% * 90% = 49.725 kWh
-    // 49.725 / 3.3 = 15.06h => 15h
-    // 49.725 / 2.1 = 23.67h => 23h
+    // Conservative active day: 49.725 / 3.3 = 15.06h => 15h
+    // Realistic day/night timeline simulation: ~18h (instead of unrealistic 23h)
     assert.equal(result.remH_cons, 15);
-    assert.equal(result.remH_opt, 23);
-    assert.equal(result.est_hours_formatted, '15 – 23 год');
+    assert.equal(result.remH_opt, 18);
+    assert.equal(result.est_hours_formatted, '15 – 18 год');
   });
 
   test('smooths out motor/elevator spikes during an active blackout with intermittent factor', () => {
