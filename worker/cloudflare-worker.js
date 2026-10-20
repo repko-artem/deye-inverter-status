@@ -258,28 +258,8 @@ async function getFreshTelemetry(env = {}) {
     }
     const statNightKw = Math.round(statNightKwVal * 10) / 10;
 
-    // Коли мережа активна — оцінюємо готовність за стабільною денною/нічною статистикою блекаутів.
-    // Під час блекауту — згладжуємо короткочасні пускові струми ліфтів/насосів (враховуємо їхній змінний цикл роботи).
-    let realisticKw = statActiveKw;
-    if (!is_grid_on && use_power_kw > statActiveKw) {
-      realisticKw = statActiveKw + (use_power_kw - statActiveKw) * 0.35;
-    }
-    const nightKw = statNightKw;
-
-    const usableSoc = Math.max(0, soc - 15);
-    const usableKwh = (65.0 * (usableSoc / 100.0)) * 0.90;
-    const hoursConservative = Math.max(0, usableKwh / realisticKw);
-    const remH_cons = Math.floor(hoursConservative);
-    const remM_cons = Math.round((hoursConservative - remH_cons) * 60);
-
-    const hoursNight = Math.max(0, usableKwh / nightKw);
-    const remH_opt = Math.floor(hoursNight);
-
-    const endCons = new Date(now.getTime() + hoursConservative * 3600 * 1000);
-    const endOpt = new Date(now.getTime() + hoursNight * 3600 * 1000);
-
-    const est_hours_formatted = `${remH_cons} – ${remH_opt} год`;
-    const est_time_until = `${endCons.toISOString().substring(11, 16)} (в економ-режимі до ${endOpt.toISOString().substring(11, 16)})`;
+    const autonomy = calculateAutonomy(soc, is_grid_on, use_power_kw, statActiveKw, statNightKw, now);
+    const { est_hours_formatted, est_time_until } = autonomy;
     const charge_rate_pct = charge_power_kw > 0 ? (charge_power_kw / 65.0 * 100).toFixed(1) : "0";
 
     // Аналіз усіх подій відключень за кілька днів
@@ -398,6 +378,40 @@ async function getFreshTelemetry(env = {}) {
       outages: []
     };
   }
+}
+
+function calculateAutonomy(soc, is_grid_on, use_power_kw, statActiveKw, statNightKw, now = new Date()) {
+  // Коли мережа активна — оцінюємо готовність за стабільною денною/нічною статистикою блекаутів.
+  // Під час блекауту — згладжуємо короткочасні пускові струми ліфтів/насосів (враховуємо їхній змінний цикл роботи).
+  let realisticKw = statActiveKw;
+  if (!is_grid_on && use_power_kw > statActiveKw) {
+    realisticKw = statActiveKw + (use_power_kw - statActiveKw) * 0.35;
+  }
+  const nightKw = statNightKw;
+
+  const usableSoc = Math.max(0, soc - 15);
+  const usableKwh = (65.0 * (usableSoc / 100.0)) * 0.90;
+  const hoursConservative = realisticKw > 0 ? Math.max(0, usableKwh / realisticKw) : 0;
+  const remH_cons = Math.floor(hoursConservative);
+  const remM_cons = Math.round((hoursConservative - remH_cons) * 60);
+
+  const hoursNight = nightKw > 0 ? Math.max(0, usableKwh / nightKw) : 0;
+  const remH_opt = Math.floor(hoursNight);
+
+  const endCons = new Date(now.getTime() + hoursConservative * 3600 * 1000);
+  const endOpt = new Date(now.getTime() + hoursNight * 3600 * 1000);
+
+  return {
+    usableKwh,
+    realisticKw,
+    nightKw,
+    hoursConservative,
+    hoursNight,
+    remH_cons,
+    remH_opt,
+    est_hours_formatted: `${remH_cons} – ${remH_opt} год`,
+    est_time_until: `${endCons.toISOString().substring(11, 16)} (в економ-режимі до ${endOpt.toISOString().substring(11, 16)})`
+  };
 }
 
 function analyzeMultiDayOutages(records, now) {
@@ -983,5 +997,6 @@ function renderHTML(data) {
 export {
   analyzeMultiDayOutages,
   buildOutageChart,
-  renderHTML
+  renderHTML,
+  calculateAutonomy
 };

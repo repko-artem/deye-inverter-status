@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeMultiDayOutages, buildOutageChart, renderHTML } from '../worker/cloudflare-worker.js';
+import { analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy } from '../worker/cloudflare-worker.js';
 
 describe('Outage Journal Analysis (analyzeMultiDayOutages)', () => {
   test('returns empty summary when records array is empty', () => {
@@ -105,5 +105,54 @@ describe('Chart & HTML Rendering', () => {
     assert.ok(html.includes('Триває 30 хв'));
     assert.ok(!html.includes('undefined'));
     assert.ok(!html.includes('NaN'));
+  });
+});
+
+describe('Autonomy Estimation (calculateAutonomy)', () => {
+  test('uses stable statistical load when grid is active, ignoring transient elevator/pump spikes', () => {
+    const soc = 100;
+    const is_grid_on = true;
+    const use_power_kw = 10.5; // huge transient spike while on grid
+    const statActiveKw = 3.3;
+    const statNightKw = 2.1;
+
+    const result = calculateAutonomy(soc, is_grid_on, use_power_kw, statActiveKw, statNightKw);
+
+    // realisticKw must strictly equal statActiveKw (3.3 kW), not 10.5 kW
+    assert.equal(result.realisticKw, 3.3);
+    assert.equal(result.nightKw, 2.1);
+    // Usable energy: 65 kWh * 85% * 90% = 49.725 kWh
+    // 49.725 / 3.3 = 15.06h => 15h
+    // 49.725 / 2.1 = 23.67h => 23h
+    assert.equal(result.remH_cons, 15);
+    assert.equal(result.remH_opt, 23);
+    assert.equal(result.est_hours_formatted, '15 – 23 год');
+  });
+
+  test('smooths out motor/elevator spikes during an active blackout with intermittent factor', () => {
+    const soc = 100;
+    const is_grid_on = false; // blackout
+    const use_power_kw = 9.5; // elevator moving
+    const statActiveKw = 3.3;
+    const statNightKw = 2.1;
+
+    const result = calculateAutonomy(soc, is_grid_on, use_power_kw, statActiveKw, statNightKw);
+
+    // smoothed: 3.3 + (9.5 - 3.3) * 0.35 = 5.47 kW
+    assert.ok(result.realisticKw < 6.0, 'realisticKw should be smoothed down from 9.5 kW');
+    assert.ok(result.realisticKw > 3.3, 'realisticKw should reflect the additional load');
+    // 49.725 / 5.47 = ~9.09h => 9h (instead of dropping to 5h!)
+    assert.equal(result.remH_cons, 9, 'Should forecast ~9 hours instead of dropping to 5 hours');
+  });
+
+  test('returns 0 hours remaining when SOC is at or below safety buffer (15%)', () => {
+    const soc = 14;
+    const is_grid_on = false;
+    const result = calculateAutonomy(soc, is_grid_on, 3.3, 3.3, 2.1);
+
+    assert.equal(result.usableKwh, 0);
+    assert.equal(result.remH_cons, 0);
+    assert.equal(result.remH_opt, 0);
+    assert.equal(result.est_hours_formatted, '0 – 0 год');
   });
 });
