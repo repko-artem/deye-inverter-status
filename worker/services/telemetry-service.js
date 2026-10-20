@@ -142,6 +142,7 @@ export class TelemetryService {
       );
 
       return {
+        version: this.config.APP_VERSION,
         updated_at: nowStr,
         is_grid_on,
         is_charging,
@@ -184,6 +185,7 @@ export class TelemetryService {
         return recent;
       }
       return {
+        version: this.config.APP_VERSION,
         worker_error: (e ? e.message || String(e) : "unknown"),
         worker_stack: (e ? e.stack : ""),
         updated_at: nowStr,

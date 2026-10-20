@@ -1,9 +1,12 @@
+import { VERSION } from './version.js';
+
 /**
  * Єдина конфігурація системи моніторингу Deye для ОСББ "Новодарницьке"
  * Принцип Single Source of Truth: усі константи та порогові значення зосереджені тут.
  */
 
 export const CONFIG = {
+  APP_VERSION: VERSION,
   BATTERY: {
     NOMINAL_CAPACITY_KWH: 65.0, // Номінальна ємність батареї (кВт·год)
     SAFETY_BUFFER_SOC: 15,       // Безпековий буфер розряду (до 15% SOC)

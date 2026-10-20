@@ -4,6 +4,7 @@
  */
 
 import { CONFIG } from './config.js';
+import { VERSION } from './version.js';
 import { globalCache } from './services/cache.js';
 import { TelemetryService } from './services/telemetry-service.js';
 import { renderHTML } from './ui/template.js';
@@ -92,6 +93,7 @@ export default {
 
 // Експорт функцій для збереження повної зворотної сумісності з тестами та зовнішніми модулями
 export {
+  VERSION,
   CONFIG,
   calculateAutonomy,
   simulateTimelineAutonomy,

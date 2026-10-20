@@ -1,6 +1,10 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { CONFIG } from '../worker/config.js';
+import { VERSION } from '../worker/version.js';
 import { isOutageRecord, calculateDischargeRate, calculate24hDischarge, simulateTimelineAutonomy } from '../worker/domain/autonomy.js';
 import { calculateOutageStatistics } from '../worker/domain/outages.js';
 import { TelemetryCache } from '../worker/services/cache.js';
@@ -133,5 +137,22 @@ describe('Services: DeyeClient (API & Error Handling)', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe('System Versioning (SemVer)', () => {
+  test('VERSION follows valid Semantic Versioning format (X.Y.Z)', () => {
+    const semVerRegex = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+    assert.match(VERSION, semVerRegex, `VERSION "${VERSION}" must match SemVer format`);
+  });
+
+  test('worker/version.js is synchronized with package.json', () => {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const pkgPath = path.resolve(__dirname, '..', 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+
+    assert.equal(VERSION, pkg.version, 'worker/version.js must match package.json version');
+    assert.equal(CONFIG.APP_VERSION, VERSION, 'CONFIG.APP_VERSION must match VERSION');
   });
 });

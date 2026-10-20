@@ -346,7 +346,8 @@ export function renderHTML(data) {
       <div>Останнє оновлення: <strong>${data.updated_at}</strong></div>
       <div style="font-size:0.68rem; opacity:0.65; margin: 3px 0 6px;">Автооновлення кожні 60 сек</div>
       <button class="btn" onclick="location.reload()">🔄 Оновити дані</button>
-      <div style="margin-top:6px; opacity:0.6;">ОСББ «Новодарницьке» • Моніторинг 24/7</div>
+      <div style="margin-top:6px; font-size:0.68rem; opacity:0.55;">ОСББ «Новодарницьке» • Моніторинг 24/7</div>
+      <div style="font-size:0.58rem; opacity:0.35; margin-top:3px; letter-spacing:0.5px;"><span title="Версія системи">v${data.version || '1.2.0'}</span></div>
     </div>
   </div>
   <script>
