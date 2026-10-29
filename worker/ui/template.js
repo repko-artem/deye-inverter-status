@@ -4,8 +4,11 @@
  */
 
 export function renderHTML(data) {
-  const soc = data.battery_soc;
-  const strokeColor = data.is_charging ? '#10b981' : (soc > 50 ? '#3b82f6' : (soc > 25 ? '#f59e0b' : '#ef4444'));
+  const isOnline = (data.is_online !== false);
+  const soc = data.battery_soc ?? 0;
+  const strokeColor = !isOnline 
+    ? '#f59e0b' 
+    : (data.is_charging ? '#10b981' : (soc > 50 ? '#3b82f6' : (soc > 25 ? '#f59e0b' : '#ef4444')));
   const offset = 502 - (soc / 100) * 502;
   const outages = data.outages || [];
   const journal = data.journal || { count: 0, totalHoursFormatted: "0 хв", minSoc: 100 };
@@ -100,25 +103,41 @@ export function renderHTML(data) {
         <h1>ОСББ «Новодарницьке»</h1>
         <p>Резервне живлення будинку • 50 кВт</p>
       </div>
-      <div class="live-badge"><div class="live-dot"></div> LIVE</div>
+      ${isOnline ? `
+        <div class="live-badge"><div class="live-dot"></div> LIVE</div>
+      ` : `
+        <div class="live-badge" style="background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); color: #f87171;">
+          <div class="live-dot" style="background: #ef4444; box-shadow: 0 0 10px #ef4444;"></div> OFFLINE
+        </div>
+      `}
     </div>
 
     <!-- STATUS BANNER -->
-    <div class="card status-banner">
-      <div class="status-icon">${data.is_charging ? '⚡' : (data.is_grid_on ? '🟢' : '🔴')}</div>
-      <div class="status-info">
-        <h2>
-          ${data.is_charging ? 'Міська мережа активна • Заряд АКБ' : (data.is_grid_on ? 'Міська мережа активна' : `Відключення світла ${outageStartStr}`.trim())}
-        </h2>
-        <p>
-          ${data.is_charging 
-            ? `Потужність заряджання: +${data.charge_power_kw.toFixed(1)} кВт (напруга: ${data.battery_voltage} В)` 
-            : (data.is_grid_on 
-              ? 'Батарея в режимі очікування (100% готовність)' 
-              : `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Старт із ${currOutage ? currOutage.startSoc : soc}%`)}
-        </p>
+    ${!isOnline ? `
+      <div class="card status-banner" style="border-left-color: var(--danger);">
+        <div class="status-icon" style="background: rgba(239, 68, 68, 0.15); color: var(--danger);">📡</div>
+        <div class="status-info">
+          <h2 style="color: #f87171;">Немає зв'язку з інвертором</h2>
+          <p>${data.offline_reason || `Дані не оновлюються з ${data.device_last_seen || data.updated_at}. Можливо, відключено роутер або живлення в щитовій.`}</p>
+        </div>
       </div>
-    </div>
+    ` : `
+      <div class="card status-banner">
+        <div class="status-icon">${data.is_charging ? '⚡' : (data.is_grid_on ? '🟢' : '🔴')}</div>
+        <div class="status-info">
+          <h2>
+            ${data.is_charging ? 'Міська мережа активна • Заряд АКБ' : (data.is_grid_on ? 'Міська мережа активна' : `Відключення світла ${outageStartStr}`.trim())}
+          </h2>
+          <p>
+            ${data.is_charging 
+              ? `Потужність заряджання: +${data.charge_power_kw.toFixed(1)} кВт (напруга: ${data.battery_voltage} В)` 
+              : (data.is_grid_on 
+                ? 'Батарея в режимі очікування (100% готовність)' 
+                : `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Старт із ${currOutage ? currOutage.startSoc : soc}%`)}
+          </p>
+        </div>
+      </div>
+    `}
 
     <!-- HERO SECTION -->
     <div class="card" style="text-align:center;">
@@ -128,13 +147,20 @@ export function renderHTML(data) {
           <circle class="gauge-progress" cx="90" cy="90" r="80"></circle>
         </svg>
         <div class="gauge-text">
-          <div><span class="gauge-val">${data.battery_soc}</span><span class="gauge-unit">%</span></div>
-          <div class="gauge-sub">${data.is_charging ? '⚡ Заряджання' : (data.is_grid_on ? '🟢 Готовність' : '🔴 Розряд АКБ')}</div>
+          <div><span class="gauge-val">${data.battery_soc ?? '--'}</span><span class="gauge-unit">%</span></div>
+          <div class="gauge-sub">${!isOnline ? '⚠️ Немає зв\'язку' : (data.is_charging ? '⚡ Заряджання' : (data.is_grid_on ? '🟢 Готовність' : '🔴 Розряд АКБ'))}</div>
         </div>
       </div>
 
       <div class="forecast-box">
-        ${data.is_grid_on ? (data.is_charging ? `
+        ${!isOnline ? `
+          <div class="forecast-title" style="color: #f59e0b;">⚠️ ОСТАННІЙ ЗБЕРЕЖЕНИЙ СТАН (${data.device_last_seen || data.updated_at})</div>
+          <div class="forecast-main" style="color: #94a3b8;">~${data.est_hours_formatted}</div>
+          <div class="forecast-sub">
+            Поточний стан може відрізнятися: інвертор тимчасово не надсилає телеметрію в хмару.<br>
+            <span style="opacity:0.85; font-size:0.75rem;">Показано останній зафіксований рівень заряду (${data.battery_soc ?? '--'}%).</span>
+          </div>
+        ` : (data.is_grid_on ? (data.is_charging ? `
           <div class="forecast-title">🔋 ЧАС ДО ПОВНОГО ЗАРЯДУ (100%)</div>
           <div class="forecast-main">~${data.time_to_full_formatted}</div>
           <div class="forecast-sub">
@@ -156,7 +182,7 @@ export function renderHTML(data) {
             Орієнтовно <strong>${data.est_time_until}</strong>
             <div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; opacity:0.9;">*Орієнтовна оцінка: від активного дня до повного добового циклу день/ніч (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} вночі) та буфером 15%.</div>
           </div>
-        `}
+        `)}
       </div>
     </div>
 
@@ -329,22 +355,30 @@ export function renderHTML(data) {
       </div>
     `).join('')}
 
-    <div class="tip-box">
-      <div>💡</div>
+    <div class="tip-box" ${!isOnline ? 'style="background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.25); color: #fecaca;"' : ''}>
+      <div>${!isOnline ? '📡' : '💡'}</div>
       <div>
-        ${data.is_grid_on ? (data.is_charging ? `
+        ${!isOnline ? `
+          <strong>Увага для мешканців / чергового:</strong> Втрачено зв'язок з даталогером інвертора. Найчастіша причина — відключення інтернет-роутера в щитовій або збій каналу зв'язку. Сама система резервного живлення будинку продовжує працювати штатно в автоматичному режимі.
+        ` : (data.is_grid_on ? (data.is_charging ? `
           <strong>Статус:</strong> Міська мережа активна. Акумулятор заряджається високою потужністю, щоб бути готовим до можливих відключень.
         ` : `
           <strong>Статус:</strong> Міська мережа активна. Акумулятор повністю заряджений (100%) та готовий до захисту критичної інфраструктури.
         `) : `
           <strong>Порада для мешканців:</strong> Будинок перейшов на резервне живлення від батареї (працюють насоси води, опалення, ліфти та чергове освітлення). Якщо є можливість піднятися сходами на свій поверх — це суттєво заощаджує заряд для безперебійного водопостачання та тепла для всього будинку!
-        `}
+        `)}
       </div>
     </div>
 
     <div class="footer">
-      <div>Останнє оновлення: <strong>${data.updated_at}</strong></div>
-      <div style="font-size:0.68rem; opacity:0.65; margin: 3px 0 6px;">Автооновлення кожні 60 сек</div>
+      <div>
+        ${isOnline 
+          ? `Останнє оновлення: <strong>${data.updated_at}</strong>` 
+          : `Останні дані від інвертора: <strong style="color:#f87171;">${data.device_last_seen || data.updated_at}</strong>`}
+      </div>
+      <div style="font-size:0.68rem; opacity:0.65; margin: 3px 0 6px;">
+        ${isOnline ? 'Автооновлення кожні 60 сек' : 'Опитування хмари щохвилини (очікування сигналу від інвертора)'}
+      </div>
       <button class="btn" onclick="location.reload()">🔄 Оновити дані</button>
       <div style="margin-top:6px; font-size:0.68rem; opacity:0.55;">ОСББ «Новодарницьке» • Моніторинг 24/7</div>
       <div style="font-size:0.58rem; opacity:0.35; margin-top:3px; letter-spacing:0.5px;"><span title="Версія системи">v${data.version || '1.2.0'}</span></div>

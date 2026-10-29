@@ -183,7 +183,9 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
               wirePower: 14500,
               batteryPower: -6400,
               batteryStatus: 'CHARGE',
-              usePower: 2500
+              usePower: 2500,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: Math.floor(Date.now() / 1000)
             })
           };
         }
@@ -228,6 +230,65 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
       const html = renderHTML(data);
       assert.ok(html.includes('100%'), 'HTML must include 100%');
       assert.ok(!html.includes('undefined'));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('correctly flags inverter as offline when telemetry is stale or router disconnected', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 100,
+              batteryBv: 641.3,
+              gridRelayStatus: 'on',
+              wirePower: 2650,
+              batteryPower: 0,
+              batteryStatus: 'DISCHARGE',
+              usePower: 2650,
+              networkStatus: 'OFFLINE',
+              // 2 hours ago
+              lastUpdateTime: nowSec - 7200
+            })
+          };
+        }
+        if (urlStr.includes('/maintain-s/history/batteryPower/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              records: [
+                { dateTime: nowSec - 7200, wirePower: 5000, batteryPower: 0, usePower: 2000, batterySoc: 100 }
+              ]
+            })
+          };
+        }
+        return { ok: false, status: 404, text: async () => "{}" };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com'
+      };
+
+      const data = await getFreshTelemetry(env);
+
+      assert.equal(data.is_online, false, 'Must be flagged as offline');
+      assert.ok(data.device_offline_minutes >= 115, 'Must report ~120 min offline');
+      assert.ok(data.offline_reason.includes("Немає зв'язку з інвертором"));
+      assert.equal(data.is_charging, false);
+
+      const html = renderHTML(data);
+      assert.ok(html.includes('OFFLINE'), 'HTML badge must show OFFLINE');
+      assert.ok(html.includes("Немає зв'язку з інвертором"), 'HTML must include clear warning');
     } finally {
       globalThis.fetch = originalFetch;
     }

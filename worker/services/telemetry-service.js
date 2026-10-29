@@ -85,6 +85,44 @@ export class TelemetryService {
       const multiDayRecords = [...pastRecordsChronological, ...todayRecords];
       const records24h = multiDayRecords.slice(-288); // 24h = 288 точок по 5 хв
 
+      // 3.5. Перевірка статусу зв'язку інвертора / даталогера
+      const nowSec = Math.floor(Date.now() / 1000);
+      const lastRecord = todayRecords.length > 0 ? todayRecords[todayRecords.length - 1] : null;
+      const lastRecordSec = lastRecord ? lastRecord.dateTime : null;
+      let lastDeviceSec = disp.lastUpdateTime || lastRecordSec;
+      if (lastDeviceSec && lastDeviceSec > 1e11) {
+        lastDeviceSec = Math.floor(lastDeviceSec / 1000);
+      }
+
+      let is_online = true;
+      let device_offline_minutes = 0;
+      let device_last_seen = nowStr;
+      let offline_reason = "";
+
+      if (lastDeviceSec) {
+        device_offline_minutes = Math.max(0, Math.round((nowSec - lastDeviceSec) / 60));
+        const lastSeenDate = new Date((lastDeviceSec + this.config.TIME.KYIV_OFFSET_SEC) * 1000);
+        const lastSeenTime = lastSeenDate.toISOString().substring(11, 16);
+        const lastSeenDateStr = lastSeenDate.toISOString().substring(0, 10);
+        const todayDateStr = nowKyiv.toISOString().substring(0, 10);
+
+        device_last_seen = (lastSeenDateStr === todayDateStr) 
+          ? `сьогодні о ${lastSeenTime}` 
+          : `${lastSeenDateStr} ${lastSeenTime}`;
+      }
+
+      const isNetworkAbnormal = Boolean(disp.networkStatus && disp.networkStatus !== "NORMAL");
+      const isStale = (device_offline_minutes > this.config.THRESHOLDS.OFFLINE_THRESHOLD_MIN);
+
+      if (isNetworkAbnormal || isStale) {
+        is_online = false;
+        const durStr = device_offline_minutes >= 60 
+          ? `${Math.floor(device_offline_minutes / 60)} год ${device_offline_minutes % 60 ? `${device_offline_minutes % 60} хв` : ''}`.trim()
+          : `${device_offline_minutes} хв`;
+
+        offline_reason = `Немає зв'язку з інвертором ${durStr ? `(понад ${durStr})` : ''}. Останній зв'язок був ${device_last_seen}. Можливо, відключено роутер або живлення в щитовій.`;
+      }
+
       // 4. Базові показники інвертора
       const soc = disp.batterySoc ?? 100;
       const voltage = disp.batteryBv ?? 645.0;
@@ -143,25 +181,29 @@ export class TelemetryService {
 
       return {
         version: this.config.APP_VERSION,
+        is_online,
+        device_last_seen,
+        device_offline_minutes,
+        offline_reason,
         updated_at: nowStr,
         is_grid_on,
-        is_charging,
+        is_charging: is_online ? is_charging : false,
         battery_status: disp.batteryStatus ?? (is_charging ? "CHARGE" : "DISCHARGE"),
         current_outage: outageJournal.currentOutage,
         battery_soc: soc,
         battery_voltage: voltage,
-        charge_power_kw,
-        discharge_power_kw,
-        charge_rate_pct,
-        discharge_rate_pct,
-        discharge_rate_subtext,
-        use_power_kw,
-        grid_power_kw,
+        charge_power_kw: is_online ? charge_power_kw : 0,
+        discharge_power_kw: is_online ? discharge_power_kw : 0,
+        charge_rate_pct: is_online ? charge_rate_pct : "0",
+        discharge_rate_pct: is_online ? discharge_rate_pct : "0",
+        discharge_rate_subtext: is_online ? discharge_rate_subtext : (offline_reason || "Немає зв'язку"),
+        use_power_kw: is_online ? use_power_kw : 0,
+        grid_power_kw: is_online ? grid_power_kw : 0,
         discharge_24h_kwh,
         today_discharge_kwh: discharge_24h_kwh,
         nominal_capacity_kwh: this.config.BATTERY.NOMINAL_CAPACITY_KWH,
-        time_to_full_formatted,
-        time_to_full_est,
+        time_to_full_formatted: is_online ? time_to_full_formatted : "--",
+        time_to_full_est: is_online ? time_to_full_est : "--",
         est_hours_remaining: Math.round(hoursConservative * 10) / 10,
         est_hours_formatted,
         est_time_until,
@@ -170,6 +212,11 @@ export class TelemetryService {
         journal: outageJournal,
         outages: outageCharts,
         debug_info: {
+          isOnline: is_online,
+          dispNetworkStatus: disp.networkStatus || null,
+          dispLastUpdateTime: disp.lastUpdateTime || null,
+          lastRecordTime: lastRecordSec || null,
+          deviceOfflineMinutes: device_offline_minutes,
           daysFetched: pastDayPromises.map(p => p.pd.key),
           cachedKeys: this.cache.getCachedDayKeys(),
           cachedCounts: this.cache.getCachedDayCounts(),
@@ -181,15 +228,26 @@ export class TelemetryService {
     } catch (e) {
       const recent = this.cache.getRecent();
       if (recent) {
-        console.error("Deye fetch error, serving previous in-memory telemetry:", e);
-        return recent;
+        console.error("Deye fetch error, serving previous in-memory telemetry with offline warning:", e);
+        return {
+          ...recent,
+          is_online: false,
+          offline_type: "CLOUD_ERROR",
+          offline_reason: `Сервер Deye Cloud тимчасово недоступний (${e.message || 'помилка мережі'}). Відображено збережені дані.`,
+          device_offline_minutes: Math.max(recent.device_offline_minutes || 0, Math.round(this.cache.getAgeSec() / 60))
+        };
       }
       return {
         version: this.config.APP_VERSION,
+        is_online: false,
+        offline_type: "CLOUD_UNAVAILABLE",
+        offline_reason: `Не вдалося зв'язатися з сервером Deye Cloud (${e.message || 'помилка мережі'}).`,
         worker_error: (e ? e.message || String(e) : "unknown"),
         worker_stack: (e ? e.stack : ""),
         updated_at: nowStr,
-        is_grid_on: true,
+        device_last_seen: "--",
+        device_offline_minutes: 0,
+        is_grid_on: false,
         is_charging: false,
         battery_soc: 100,
         battery_voltage: 645.0,
@@ -197,7 +255,7 @@ export class TelemetryService {
         discharge_power_kw: 0,
         charge_rate_pct: "0",
         discharge_rate_pct: "0",
-        discharge_rate_subtext: "Помилка зв'язку з Deye API",
+        discharge_rate_subtext: "Помилка зв'язку з Deye Cloud",
         use_power_kw: 0,
         grid_power_kw: 0,
         discharge_24h_kwh: "0.0",
@@ -205,8 +263,8 @@ export class TelemetryService {
         nominal_capacity_kwh: this.config.BATTERY.NOMINAL_CAPACITY_KWH,
         time_to_full_formatted: "--",
         time_to_full_est: "--",
-        est_hours_remaining: 15.0,
-        est_hours_formatted: "15 – 23 год",
+        est_hours_remaining: 0,
+        est_hours_formatted: "--",
         est_time_until: "--",
         stat_active_kw: this.config.THRESHOLDS.DEFAULT_ACTIVE_KW.toFixed(1),
         stat_night_kw: this.config.THRESHOLDS.DEFAULT_NIGHT_KW.toFixed(1),
