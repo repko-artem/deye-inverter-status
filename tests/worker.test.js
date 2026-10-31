@@ -125,13 +125,13 @@ describe('Autonomy Estimation (calculateAutonomy)', () => {
     // realisticKw must strictly equal statActiveKw (3.3 kW), not 10.5 kW
     assert.equal(result.realisticKw, 3.3);
     assert.equal(result.nightKw, 2.1);
-    // Usable energy: 65 kWh * 85% * 90% = 49.725 kWh
-    // Conservative active day: 49.725 / 3.3 = 15.06h => 15h
-    // Realistic day/night timeline simulation: ~18h (instead of unrealistic 23h)
+    // Usable energy: 65 kWh * 90% * 90% = 52.65 kWh
+    // Conservative active day: 52.65 / 3.3 = 15.95h => 15h
+    // Realistic day/night timeline simulation: ~19h (instead of unrealistic 23h)
     assert.equal(result.remH_cons, 15);
-    assert.equal(result.remH_opt, 18);
-    assert.equal(result.est_hours_formatted, '15 – 18 год');
-    assert.equal(result.est_time_until, 'до 07:58 (мінімум до 05:04)');
+    assert.equal(result.remH_opt, 19);
+    assert.equal(result.est_hours_formatted, '15 – 19 год');
+    assert.equal(result.est_time_until, 'до 08:51 (мінімум до 05:57)');
   });
 
   test('smooths out motor/elevator spikes during an active blackout with intermittent factor', () => {
@@ -147,12 +147,11 @@ describe('Autonomy Estimation (calculateAutonomy)', () => {
     // smoothed: 3.3 + (9.5 - 3.3) * 0.35 = 5.47 kW
     assert.ok(result.realisticKw < 6.0, 'realisticKw should be smoothed down from 9.5 kW');
     assert.ok(result.realisticKw > 3.3, 'realisticKw should reflect the additional load');
-    // 49.725 / 5.47 = ~9.09h => 9h (instead of dropping to 5h!)
     assert.equal(result.remH_cons, 9, 'Should forecast ~9 hours instead of dropping to 5 hours');
   });
 
-  test('returns 0 hours remaining when SOC is at or below safety buffer (15%)', () => {
-    const soc = 14;
+  test('returns 0 hours remaining when SOC is at or below safety buffer (10%)', () => {
+    const soc = 10;
     const is_grid_on = false;
     const testDate = new Date('2026-10-20T14:00:00.000Z');
     const result = calculateAutonomy(soc, is_grid_on, 3.3, 3.3, 2.1, testDate);

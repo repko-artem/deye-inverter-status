@@ -34,7 +34,7 @@ export const CONFIG = {
   APP_VERSION: VERSION,
   BATTERY: {
     NOMINAL_CAPACITY_KWH: 65.0, // Номінальна ємність батареї (кВт·год)
-    SAFETY_BUFFER_SOC: 15,       // Безпековий буфер розряду (до 15% SOC)
+    SAFETY_BUFFER_SOC: 10,       // Межа відключення інвертора (Shutdown SOC: 10%)
     INVERTER_EFFICIENCY: 0.90,   // Базовий ККД перетворення інвертора
     DISCHARGE_EFFICIENCY: 0.92,  // ККД батареї на розряд (AC/DC)
     ABSORPTION_VOLTAGE_MIN: 645.0 // Напруга режиму балансування комірок

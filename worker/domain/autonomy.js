@@ -97,7 +97,7 @@ export function calculateAutonomy(
   }
   const nightKw = statNightKw;
 
-  // Доступна енергія до безпекового порогу 15% SOC з урахуванням ККД 90%
+  // Доступна енергія до встановленої межі вимкнення 10% SOC з урахуванням ККД 90%
   const usableSoc = Math.max(0, soc - SAFETY_BUFFER_SOC);
   const usableKwh = (NOMINAL_CAPACITY_KWH * (usableSoc / 100.0)) * INVERTER_EFFICIENCY;
 

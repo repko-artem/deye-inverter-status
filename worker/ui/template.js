@@ -173,7 +173,7 @@ export function renderHTML(data) {
           <div class="forecast-main">~${data.full_est_hours_formatted || data.est_hours_formatted}</div>
           <div class="forecast-sub">
             АКБ повністю заряджено (100%) та готовий до резервного живлення критичних систем будинку (води, опалення, ліфтів та чергового освітлення).
-            <div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; opacity:0.9;">*Орієнтовна оцінка: від активного дня до повного добового циклу день/ніч (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} вночі) та буфером 15%.</div>
+            <div style="font-size:0.7rem; color:var(--text-muted); margin-top:4px; opacity:0.9;">*Орієнтовна оцінка: від активного дня до повного добового циклу день/ніч (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} вночі) з порогом вимкнення 10%.</div>
           </div>
         `) : `
           <div class="forecast-title">⏳ ЗАЛИШОК АВТОНОМНОСТІ</div>
@@ -181,7 +181,7 @@ export function renderHTML(data) {
           <div class="forecast-sub">
             Орієнтовно <strong>${data.est_time_until}</strong>
             <div style="font-size:0.75rem; margin-top:5px; opacity:0.9;">Повний резерв при 100% АКБ: <strong>~${data.full_est_hours_formatted || data.est_hours_formatted}</strong>.</div>
-            <div style="font-size:0.68rem; color:var(--text-muted); margin-top:4px; opacity:0.85;">*Оцінка враховує зміну споживання день/ніч (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} вночі) та резервний буфер 15%.</div>
+            <div style="font-size:0.68rem; color:var(--text-muted); margin-top:4px; opacity:0.85;">*Оцінка враховує зміну споживання день/ніч (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} вночі) та поріг вимкнення 10%.</div>
           </div>
         `)}
       </div>
