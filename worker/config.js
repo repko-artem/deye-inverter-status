@@ -5,6 +5,31 @@ import { VERSION } from './version.js';
  * Принцип Single Source of Truth: усі константи та порогові значення зосереджені тут.
  */
 
+/**
+ * Динамічне визначення зміщення київського часу відносно UTC (враховує літній/зимовий час).
+ * Взимку (EET): UTC+2 (7200 сек).
+ * Влітку (EEST): UTC+3 (10800 сек).
+ */
+export function getKyivOffsetSec(date = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', { 
+      timeZone: 'Europe/Kyiv', 
+      timeZoneName: 'longOffset' 
+    }).formatToParts(date);
+    const tz = parts.find(p => p.type === 'timeZoneName')?.value;
+    const match = tz && tz.match(/GMT([+-])(\d{1,2}):?(\d{2})?/);
+    if (match) {
+      const sign = match[1] === '+' ? 1 : -1;
+      const h = parseInt(match[2], 10);
+      const m = match[3] ? parseInt(match[3], 10) : 0;
+      return sign * (h * 3600 + m * 60);
+    }
+  } catch (e) {
+    // Fallback якщо середовище не підтримує timeZoneName
+  }
+  return 2 * 3600; // Стандартний київський час UTC+2
+}
+
 export const CONFIG = {
   APP_VERSION: VERSION,
   BATTERY: {
@@ -26,8 +51,13 @@ export const CONFIG = {
     OFFLINE_THRESHOLD_MIN: 15    // Максимальний допустимий інтервал без оновлень (хв) перед переходом в OFFLINE
   },
   TIME: {
-    KYIV_OFFSET_HOURS: 3,
-    KYIV_OFFSET_SEC: 3 * 3600
+    TIMEZONE: 'Europe/Kyiv',
+    get KYIV_OFFSET_SEC() {
+      return getKyivOffsetSec();
+    },
+    get KYIV_OFFSET_HOURS() {
+      return Math.round(getKyivOffsetSec() / 3600);
+    }
   },
   CACHE: {
     TTL_MS: 60 * 1000,           // TTL кешу телеметрії (60 сек)

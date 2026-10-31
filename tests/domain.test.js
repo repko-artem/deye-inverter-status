@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONFIG } from '../worker/config.js';
+import { CONFIG, getKyivOffsetSec } from '../worker/config.js';
 import { VERSION } from '../worker/version.js';
 import { isOutageRecord, calculateDischargeRate, calculate24hDischarge, simulateTimelineAutonomy } from '../worker/domain/autonomy.js';
 import { calculateOutageStatistics } from '../worker/domain/outages.js';
@@ -154,5 +154,14 @@ describe('System Versioning (SemVer)', () => {
 
     assert.equal(VERSION, pkg.version, 'worker/version.js must match package.json version');
     assert.equal(CONFIG.APP_VERSION, VERSION, 'CONFIG.APP_VERSION must match VERSION');
+  });
+
+  test('getKyivOffsetSec correctly returns UTC+2 for winter and UTC+3 for summer', () => {
+    const winterDate = new Date('2026-10-31T12:00:00Z');
+    const summerDate = new Date('2026-07-15T12:00:00Z');
+
+    assert.equal(getKyivOffsetSec(winterDate), 2 * 3600, 'Kyiv winter time must be UTC+2 (7200s)');
+    assert.equal(getKyivOffsetSec(summerDate), 3 * 3600, 'Kyiv summer time must be UTC+3 (10800s)');
+    assert.equal(CONFIG.TIME.KYIV_OFFSET_SEC, 2 * 3600, 'Current date (Oct 31) must evaluate to UTC+2');
   });
 });
