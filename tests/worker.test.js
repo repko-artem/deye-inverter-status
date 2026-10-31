@@ -89,6 +89,7 @@ describe('Chart & HTML Rendering', () => {
       grid_power_kw: 0.0,
       est_hours_formatted: '9 – 14 год',
       est_time_until: '23:30',
+      full_est_hours_formatted: '15 – 18 год',
       stat_active_kw: '4.8',
       stat_night_kw: '2.8',
       discharge_24h_kwh: '15.2',
@@ -103,6 +104,8 @@ describe('Chart & HTML Rendering', () => {
     assert.ok(html.includes('85'));
     assert.ok(html.includes('Відключення світла (з 14:00)'));
     assert.ok(html.includes('Триває 30 хв'));
+    assert.ok(html.includes('ЗАЛИШОК АВТОНОМНОСТІ'));
+    assert.ok(html.includes('Повний резерв при 100% АКБ'));
     assert.ok(!html.includes('undefined'));
     assert.ok(!html.includes('NaN'));
   });
@@ -237,6 +240,7 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
       assert.equal(data.is_charging, true);
       assert.equal(typeof data.est_hours_remaining, 'number');
       assert.ok(data.est_hours_remaining > 0);
+      assert.equal(typeof data.full_est_hours_formatted, 'string');
       assert.ok(data.journal);
       assert.ok(data.journal.events.length > 0);
       assert.ok(data.outages.length > 0, 'Outage events must be populated');

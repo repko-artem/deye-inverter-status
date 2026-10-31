@@ -157,6 +157,9 @@ export class TelemetryService {
       const autonomy = calculateAutonomy(soc, is_grid_on, use_power_kw, statActiveKw, statNightKw, nowKyiv, this.config);
       const { est_hours_formatted, est_time_until, hoursConservative } = autonomy;
 
+      const fullAutonomy = calculateAutonomy(100, true, statActiveKw, statActiveKw, statNightKw, nowKyiv, this.config);
+      const full_est_hours_formatted = fullAutonomy.est_hours_formatted;
+
       const charge_rate_pct = charge_power_kw > 0 
         ? (charge_power_kw / this.config.BATTERY.NOMINAL_CAPACITY_KWH * 100).toFixed(1) 
         : "0";
@@ -207,6 +210,7 @@ export class TelemetryService {
         est_hours_remaining: Math.round(hoursConservative * 10) / 10,
         est_hours_formatted,
         est_time_until,
+        full_est_hours_formatted,
         stat_active_kw: statActiveKw.toFixed(1),
         stat_night_kw: statNightKw.toFixed(1),
         journal: outageJournal,
@@ -266,6 +270,7 @@ export class TelemetryService {
         est_hours_remaining: 0,
         est_hours_formatted: "--",
         est_time_until: "--",
+        full_est_hours_formatted: "--",
         stat_active_kw: this.config.THRESHOLDS.DEFAULT_ACTIVE_KW.toFixed(1),
         stat_night_kw: this.config.THRESHOLDS.DEFAULT_NIGHT_KW.toFixed(1),
         journal: { count: 0, totalMin: 0, minSoc: 100, events: [] },
