@@ -18,22 +18,32 @@ export class DeyeClient {
     };
   }
 
-  async fetchJson(url) {
-    const res = await fetch(url, { headers: this.getHeaders() });
-    const text = await res.text();
-    const trimmed = text.trim();
+  async fetchJson(url, timeoutMs = 8000) {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
-    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-      const plain = trimmed
-        .replace(/<style[\s\S]*?<\/style>/gi, '')
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      throw new Error(`Deye API HTTP ${res.status}: ${plain.substring(0, 400)}`);
+    try {
+      const res = await fetch(url, { 
+        headers: this.getHeaders(),
+        signal: controller ? controller.signal : undefined
+      });
+      const text = await res.text();
+      const trimmed = text.trim();
+
+      if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+        const plain = trimmed
+          .replace(/<style[\s\S]*?<\/style>/gi, '')
+          .replace(/<script[\s\S]*?<\/script>/gi, '')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        throw new Error(`Deye API HTTP ${res.status}: ${plain.substring(0, 400)}`);
+      }
+
+      return JSON.parse(text);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
-
-    return JSON.parse(text);
   }
 
   /**

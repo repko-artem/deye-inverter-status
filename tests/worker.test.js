@@ -115,8 +115,9 @@ describe('Autonomy Estimation (calculateAutonomy)', () => {
     const use_power_kw = 10.5; // huge transient spike while on grid
     const statActiveKw = 3.3;
     const statNightKw = 2.1;
+    const fixedAfternoonDate = new Date('2026-10-20T14:00:00.000Z');
 
-    const result = calculateAutonomy(soc, is_grid_on, use_power_kw, statActiveKw, statNightKw);
+    const result = calculateAutonomy(soc, is_grid_on, use_power_kw, statActiveKw, statNightKw, fixedAfternoonDate);
 
     // realisticKw must strictly equal statActiveKw (3.3 kW), not 10.5 kW
     assert.equal(result.realisticKw, 3.3);
@@ -135,8 +136,9 @@ describe('Autonomy Estimation (calculateAutonomy)', () => {
     const use_power_kw = 9.5; // elevator moving
     const statActiveKw = 3.3;
     const statNightKw = 2.1;
+    const fixedAfternoonDate = new Date('2026-10-20T14:00:00.000Z');
 
-    const result = calculateAutonomy(soc, is_grid_on, use_power_kw, statActiveKw, statNightKw);
+    const result = calculateAutonomy(soc, is_grid_on, use_power_kw, statActiveKw, statNightKw, fixedAfternoonDate);
 
     // smoothed: 3.3 + (9.5 - 3.3) * 0.35 = 5.47 kW
     assert.ok(result.realisticKw < 6.0, 'realisticKw should be smoothed down from 9.5 kW');
