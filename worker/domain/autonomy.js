@@ -103,21 +103,35 @@ export function calculateAutonomy(
 
   // 1. Консервативна оцінка: якщо весь час триватиме активне денне навантаження
   const hoursConservative = realisticKw > 0 ? Math.max(0, usableKwh / realisticKw) : 0;
-  const remH_cons = Math.floor(hoursConservative);
 
   // 2. Реалістична оцінка: хронологічна симуляція з урахуванням зміни дня і ночі за годинником
   const timeline = simulateTimelineAutonomy(usableKwh, now, realisticKw, nightKw, config);
   const hoursNight = timeline.hours;
-  const remH_opt = Math.round(hoursNight);
 
   const endCons = new Date(now.getTime() + hoursConservative * 3600 * 1000);
   const endOpt = timeline.endDate;
 
   const tOpt = endOpt.toISOString().substring(11, 16);
   const tCons = endCons.toISOString().substring(11, 16);
-  const est_time_until = (tOpt === tCons)
-    ? `до ${tOpt}`
-    : `до ${tOpt} (мінімум до ${tCons})`;
+
+  // Значуща різниця: коли нічна економія реально додає час (від 15 хвилин різниці)
+  const isDiffMeaningful = (tOpt !== tCons) && (Math.abs(endOpt.getTime() - endCons.getTime()) >= 15 * 60 * 1000);
+
+  let remH_cons = Math.floor(hoursConservative);
+  let remH_opt = Math.round(hoursNight);
+
+  if (!isDiffMeaningful) {
+    remH_cons = Math.round(hoursConservative);
+    remH_opt = remH_cons;
+  }
+
+  const est_time_until = isDiffMeaningful
+    ? `до ${tOpt} (мінімум до ${tCons})`
+    : `до ${tOpt}`;
+
+  const est_hours_formatted = (remH_cons === remH_opt)
+    ? `${remH_cons} год`
+    : `${remH_cons} – ${remH_opt} год`;
 
   return {
     usableKwh,
@@ -127,7 +141,7 @@ export function calculateAutonomy(
     hoursNight,
     remH_cons,
     remH_opt,
-    est_hours_formatted: `${remH_cons} – ${remH_opt} год`,
+    est_hours_formatted,
     est_time_until
   };
 }

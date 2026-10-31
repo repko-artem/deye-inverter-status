@@ -157,8 +157,18 @@ describe('Autonomy Estimation (calculateAutonomy)', () => {
     assert.equal(result.usableKwh, 0);
     assert.equal(result.remH_cons, 0);
     assert.equal(result.remH_opt, 0);
-    assert.equal(result.est_hours_formatted, '0 – 0 год');
+    assert.equal(result.est_hours_formatted, '0 год');
     assert.equal(result.est_time_until, 'до 14:00');
+  });
+
+  test('does not duplicate hours or times when conservative and optimistic match', () => {
+    // 50% SOC, 4.5 kW day load starting at 12:00 -> exhausts in ~4.5h by 16:30 (all daytime)
+    const testDate = new Date('2026-10-20T12:00:00.000Z');
+    const result = calculateAutonomy(50, false, 4.5, 4.5, 2.5, testDate);
+
+    assert.equal(result.remH_cons, result.remH_opt);
+    assert.doesNotMatch(result.est_hours_formatted, /–/);
+    assert.doesNotMatch(result.est_time_until, /мінімум/);
   });
 
   test('returns all essential estimation fields including hoursConservative', () => {
