@@ -113,6 +113,12 @@ export function calculateAutonomy(
   const endCons = new Date(now.getTime() + hoursConservative * 3600 * 1000);
   const endOpt = timeline.endDate;
 
+  const tOpt = endOpt.toISOString().substring(11, 16);
+  const tCons = endCons.toISOString().substring(11, 16);
+  const est_time_until = (tOpt === tCons)
+    ? `до ${tOpt}`
+    : `до ${tOpt} (мінімум до ${tCons})`;
+
   return {
     usableKwh,
     realisticKw,
@@ -122,7 +128,7 @@ export function calculateAutonomy(
     remH_cons,
     remH_opt,
     est_hours_formatted: `${remH_cons} – ${remH_opt} год`,
-    est_time_until: `${endCons.toISOString().substring(11, 16)} (за добовим циклом до ${endOpt.toISOString().substring(11, 16)})`
+    est_time_until
   };
 }
 

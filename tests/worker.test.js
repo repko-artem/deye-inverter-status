@@ -128,6 +128,7 @@ describe('Autonomy Estimation (calculateAutonomy)', () => {
     assert.equal(result.remH_cons, 15);
     assert.equal(result.remH_opt, 18);
     assert.equal(result.est_hours_formatted, '15 – 18 год');
+    assert.equal(result.est_time_until, 'до 07:58 (мінімум до 05:04)');
   });
 
   test('smooths out motor/elevator spikes during an active blackout with intermittent factor', () => {
@@ -150,12 +151,14 @@ describe('Autonomy Estimation (calculateAutonomy)', () => {
   test('returns 0 hours remaining when SOC is at or below safety buffer (15%)', () => {
     const soc = 14;
     const is_grid_on = false;
-    const result = calculateAutonomy(soc, is_grid_on, 3.3, 3.3, 2.1);
+    const testDate = new Date('2026-10-20T14:00:00.000Z');
+    const result = calculateAutonomy(soc, is_grid_on, 3.3, 3.3, 2.1, testDate);
 
     assert.equal(result.usableKwh, 0);
     assert.equal(result.remH_cons, 0);
     assert.equal(result.remH_opt, 0);
     assert.equal(result.est_hours_formatted, '0 – 0 год');
+    assert.equal(result.est_time_until, 'до 14:00');
   });
 
   test('returns all essential estimation fields including hoursConservative', () => {
