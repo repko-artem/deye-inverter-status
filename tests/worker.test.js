@@ -56,6 +56,23 @@ describe('Outage Journal Analysis (analyzeMultiDayOutages)', () => {
     assert.equal(result.currentOutage.isOngoing, true);
     assert.equal(result.currentOutage.durationMin, 10);
   });
+
+  test('accurately calculates duration by wall-clock timestamps when telemetry points are missing', () => {
+    const baseTimeSec = 1793522100; // 08:35
+    // 8h 10m later = 490 min = 29400 sec => 16:45
+    const endTimeSec = baseTimeSec + 29400;
+    // Simulate packet loss: 95 points recorded across a 490-minute blackout
+    const records = [
+      { dateTime: baseTimeSec, wirePower: 0, batteryPower: 4000, batterySoc: 100 },
+      ...Array(94).fill({ dateTime: baseTimeSec + 300, wirePower: 0, batteryPower: 4000, batterySoc: 50 }),
+      { dateTime: endTimeSec, wirePower: 5000, batteryPower: -2000, batterySoc: 50 } // restored at 16:45
+    ];
+
+    const result = analyzeMultiDayOutages(records, new Date((endTimeSec + 60) * 1000));
+    assert.equal(result.validEvents.length, 1);
+    const event = result.validEvents[0];
+    assert.equal(event.durationMin, 490, 'Duration must be 490 minutes (8h 10m), not 475 min (7h 55m)');
+  });
 });
 
 describe('Chart & HTML Rendering', () => {

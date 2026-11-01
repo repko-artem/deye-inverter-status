@@ -57,7 +57,11 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
         curr.endIndex = idx - 1;
         curr.end = time;
         curr.endTimestampSec = r.dateTime + kyivOffsetSec;
-        curr.durationMin = curr.pointsCount * 5;
+        // Тривалість за реальними астрономічними мітками початку й кінця (захист від втрати 5-хв Wi-Fi точок)
+        curr.durationMin = Math.max(
+          curr.pointsCount * 5,
+          Math.round((curr.endTimestampSec - curr.startTimestampSec) / 60)
+        );
 
         if (curr.dateStr === todayDateStr) {
           curr.dayLabel = "Сьогодні";
@@ -86,7 +90,11 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
     curr.endIndex = records.length - 1;
     curr.end = "зараз";
     curr.endTimestampSec = Math.floor(nowKyiv.getTime() / 1000);
-    curr.durationMin = curr.pointsCount * 5;
+    // Тривалість за реальними астрономічними мітками часу
+    curr.durationMin = Math.max(
+      curr.pointsCount * 5,
+      Math.round((curr.endTimestampSec - curr.startTimestampSec) / 60)
+    );
     curr.dayLabel = (curr.dateStr === todayDateStr) ? "Сьогодні" : curr.dateStr;
     curr.isOngoing = true;
 
