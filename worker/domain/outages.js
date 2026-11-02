@@ -62,6 +62,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
           curr.pointsCount * 5,
           Math.round((curr.endTimestampSec - curr.startTimestampSec) / 60)
         );
+        curr.socDrain = Math.max(0, curr.startSoc - curr.minSoc);
 
         if (curr.dateStr === todayDateStr) {
           curr.dayLabel = "Сьогодні";
@@ -97,6 +98,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
     );
     curr.dayLabel = (curr.dateStr === todayDateStr) ? "Сьогодні" : curr.dateStr;
     curr.isOngoing = true;
+    curr.socDrain = Math.max(0, curr.startSoc - curr.minSoc);
 
     if (curr.durationMin > config.THRESHOLDS.MIN_OUTAGE_MINUTES) {
       events.push(curr);

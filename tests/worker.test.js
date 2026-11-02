@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy, getFreshTelemetry } from '../worker/cloudflare-worker.js';
+import { analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy, getFreshTelemetry, globalCache } from '../worker/cloudflare-worker.js';
 
 describe('Outage Journal Analysis (analyzeMultiDayOutages)', () => {
   test('returns empty summary when records array is empty', () => {
@@ -72,6 +72,24 @@ describe('Outage Journal Analysis (analyzeMultiDayOutages)', () => {
     assert.equal(result.validEvents.length, 1);
     const event = result.validEvents[0];
     assert.equal(event.durationMin, 490, 'Duration must be 490 minutes (8h 10m), not 475 min (7h 55m)');
+  });
+
+  test('calculates socDrain property on outage events', () => {
+    const baseTimeSec = 1792060000;
+    const records = [
+      { dateTime: baseTimeSec, wirePower: 5000, batteryPower: 0, batterySoc: 100 },
+      { dateTime: baseTimeSec + 300, wirePower: 0, batteryPower: 3000, batterySoc: 100 },
+      { dateTime: baseTimeSec + 600, wirePower: 0, batteryPower: 3200, batterySoc: 95 },
+      { dateTime: baseTimeSec + 900, wirePower: 0, batteryPower: 3100, batterySoc: 92 },
+      { dateTime: baseTimeSec + 1200, wirePower: 5000, batteryPower: -2000, batterySoc: 92 }
+    ];
+
+    const result = analyzeMultiDayOutages(records, new Date((baseTimeSec + 1500) * 1000));
+    assert.equal(result.validEvents.length, 1);
+    const event = result.validEvents[0];
+    assert.equal(event.startSoc, 100);
+    assert.equal(event.minSoc, 92);
+    assert.equal(event.socDrain, 8);
   });
 });
 
@@ -324,6 +342,94 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
       const html = renderHTML(data);
       assert.ok(html.includes('OFFLINE'), 'HTML badge must show OFFLINE');
       assert.ok(html.includes("Немає зв'язку з інвертором"), 'HTML must include clear warning');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('filters out past outage charts with socDrain < 1% while preserving ongoing outage', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const nowKyiv = new Date(Date.now() + 7200 * 1000);
+      const todayQuery = `year=${nowKyiv.getFullYear()}&month=${nowKyiv.getMonth() + 1}&day=${nowKyiv.getDate()}`;
+
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 100,
+              batteryBv: 641.3,
+              gridRelayStatus: 'off',
+              wirePower: 0,
+              batteryPower: 3500,
+              batteryStatus: 'DISCHARGE',
+              usePower: 3500,
+              networkStatus: 'ONLINE',
+              lastUpdateTime: nowSec
+            })
+          };
+        }
+        if (urlStr.includes('/maintain-s/history/batteryPower/')) {
+          if (!urlStr.includes(todayQuery)) {
+            return {
+              ok: true,
+              status: 200,
+              text: async () => JSON.stringify({ records: [] })
+            };
+          }
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              records: [
+                // Event 1 (past, 15 min): battery stayed 100% -> socDrain: 0 (< 1%, MUST BE FILTERED)
+                { dateTime: nowSec - 7200, wirePower: 5000, batteryPower: 0, usePower: 2000, batterySoc: 100 },
+                { dateTime: nowSec - 6300, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 100 },
+                { dateTime: nowSec - 6000, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 100 },
+                { dateTime: nowSec - 5700, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 100 },
+                { dateTime: nowSec - 5400, wirePower: 5000, batteryPower: -2000, usePower: 2000, batterySoc: 100 },
+                // Event 2 (past, 20 min): battery 100% -> 98% -> socDrain: 2% (>= 1%, MUST BE KEPT)
+                { dateTime: nowSec - 4200, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 100 },
+                { dateTime: nowSec - 3900, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 99 },
+                { dateTime: nowSec - 3600, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 98 },
+                { dateTime: nowSec - 3300, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 98 },
+                { dateTime: nowSec - 3000, wirePower: 5000, batteryPower: -2000, usePower: 2000, batterySoc: 98 },
+                // Event 3 (ongoing, 15 min): battery 100% -> 100% -> socDrain: 0 (< 1%, MUST BE KEPT BECAUSE ONGOING)
+                { dateTime: nowSec - 900, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 100 },
+                { dateTime: nowSec - 600, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 100 },
+                { dateTime: nowSec - 300, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 100 }
+              ]
+            })
+          };
+        }
+        return { ok: false, status: 404, text: async () => "{}" };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com'
+      };
+
+      const data = await getFreshTelemetry(env);
+
+      // In journal: all 3 events are recorded
+      assert.equal(data.journal.events.length, 3);
+
+      // In outage charts: Event 1 (past 0% drain) must be omitted, Event 2 (past 2% drain) & Event 3 (ongoing 0% drain) must be kept
+      assert.equal(data.outages.length, 2, 'Only meaningful past outages and ongoing outage should have charts');
+      const ongoingChart = data.outages.find(o => o.isOngoing);
+      assert.ok(ongoingChart, 'Ongoing outage chart must be preserved even if socDrain < 1%');
+      assert.equal(ongoingChart.socDrain, 0);
+
+      const pastChart = data.outages.find(o => !o.isOngoing);
+      assert.ok(pastChart, 'Meaningful past outage must be preserved');
+      assert.equal(pastChart.socDrain, 2);
     } finally {
       globalThis.fetch = originalFetch;
     }

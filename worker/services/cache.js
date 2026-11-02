@@ -14,6 +14,13 @@ export class TelemetryCache {
     this.cachedDayRecords = {};
   }
 
+  clear() {
+    this.inMemoryData = null;
+    this.inMemoryTimestamp = 0;
+    this.ongoingFetchPromise = null;
+    this.cachedDayRecords = {};
+  }
+
   isFresh(now = Date.now()) {
     return Boolean(this.inMemoryData && (now - this.inMemoryTimestamp < this.ttlMs));
   }

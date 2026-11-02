@@ -167,10 +167,17 @@ export class TelemetryService {
       // 8. Журнал та графіки відключень
       const outageJournal = analyzeMultiDayOutages(multiDayRecords, nowKyiv, this.config);
       const validOutages = outageJournal.validEvents || [];
-      const recentOutages = validOutages.slice(-3).reverse();
+      // Показувати поточне відключення (навіть якщо розряд ще <1%), а для минулих відключень
+      // не показувати графіки, де був розряд батареї менше 1%.
+      const chartEligibleOutages = validOutages.filter(e => {
+        const drain = e.socDrain != null ? e.socDrain : Math.max(0, (e.startSoc || 0) - (e.minSoc || 0));
+        return e.isOngoing || drain >= 1;
+      });
+      const recentOutages = chartEligibleOutages.slice(-3).reverse();
       const outageCharts = recentOutages
-        .map((e, idx) => buildOutageChart(e, multiDayRecords, validOutages.length - idx, this.config))
-        .filter(Boolean);
+        .map((e, idx) => buildOutageChart(e, multiDayRecords, chartEligibleOutages.length - idx, this.config))
+        .filter(Boolean)
+        .filter(c => c.isOngoing || c.socDrain >= 1);
 
       // 9. Доменний розрахунок витрати та темпу розряду
       const discharge_24h_kwh = calculate24hDischarge(records24h, this.config);

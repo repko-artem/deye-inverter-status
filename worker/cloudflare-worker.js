@@ -95,6 +95,7 @@ export default {
 export {
   VERSION,
   CONFIG,
+  globalCache,
   calculateAutonomy,
   simulateTimelineAutonomy,
   analyzeMultiDayOutages,
