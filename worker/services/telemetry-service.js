@@ -52,9 +52,12 @@ export class TelemetryService {
     const pastDays = getPastDaysList(nowKyiv, this.config.CACHE.HISTORY_DAYS);
 
     try {
-      // 1. Паралельний запит: станція + сьогоднішня історія
+      // 1. Паралельний запит: станція + сьогоднішня історія (історія не блокує живі дані інвертора)
       const dispPromise = this.client.getStationDisplay();
-      const histTodayPromise = this.client.getDailyBatteryHistory(yToday, mToday, dToday);
+      const histTodayPromise = this.client.getDailyBatteryHistory(yToday, mToday, dToday).catch(err => {
+        console.error("Помилка завантаження сьогоднішньої історії (м'який фолбек):", err);
+        return null;
+      });
 
       // 2. Довантаження відсутніх днів з кешу
       const pastDayPromises = [];
@@ -237,6 +240,13 @@ export class TelemetryService {
         }
       };
     } catch (e) {
+      const rawMsg = (e && e.message) ? e.message : 'помилка мережі';
+      const cleanErrMsg = rawMsg
+        .replace(/The operation was aborted\.?/gi, 'перевищено час очікування')
+        .replace(/AbortError:?/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
       const recent = this.cache.getRecent();
       if (recent) {
         console.error("Deye fetch error, serving previous in-memory telemetry with offline warning:", e);
@@ -244,7 +254,7 @@ export class TelemetryService {
           ...recent,
           is_online: false,
           offline_type: "CLOUD_ERROR",
-          offline_reason: `Сервер Deye Cloud тимчасово недоступний (${e.message || 'помилка мережі'}). Відображено збережені дані.`,
+          offline_reason: `Сервер Deye Cloud тимчасово не відповів (${cleanErrMsg || 'перевищено час очікування'}). Відображено збережені дані.`,
           device_offline_minutes: Math.max(recent.device_offline_minutes || 0, Math.round(this.cache.getAgeSec() / 60))
         };
       }
@@ -252,8 +262,8 @@ export class TelemetryService {
         version: this.config.APP_VERSION,
         is_online: false,
         offline_type: "CLOUD_UNAVAILABLE",
-        offline_reason: `Не вдалося зв'язатися з сервером Deye Cloud (${e.message || 'помилка мережі'}).`,
-        worker_error: (e ? e.message || String(e) : "unknown"),
+        offline_reason: `Не вдалося зв'язатися з сервером Deye Cloud (${cleanErrMsg || 'перевищено час очікування'}).`,
+        worker_error: cleanErrMsg,
         worker_stack: (e ? e.stack : ""),
         updated_at: nowStr,
         device_last_seen: "--",

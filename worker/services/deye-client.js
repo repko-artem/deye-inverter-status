@@ -18,7 +18,7 @@ export class DeyeClient {
     };
   }
 
-  async fetchJson(url, timeoutMs = 8000) {
+  async fetchJson(url, timeoutMs = 15000) {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
@@ -41,6 +41,11 @@ export class DeyeClient {
       }
 
       return JSON.parse(text);
+    } catch (err) {
+      if (err && (err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('abort')))) {
+        throw new Error(`перевищено час очікування відповіді (${Math.round(timeoutMs / 1000)} сек)`);
+      }
+      throw err;
     } finally {
       if (timer) clearTimeout(timer);
     }

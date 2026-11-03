@@ -138,6 +138,35 @@ describe('Services: DeyeClient (API & Error Handling)', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test('converts abort timeout into readable Ukrainian error message without "The operation was aborted"', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (url, options) => {
+        return new Promise((resolve, reject) => {
+          if (options && options.signal) {
+            options.signal.addEventListener('abort', () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          }
+        });
+      };
+
+      const client = new DeyeClient('https://mock.deye.com', 'test-token', '12345');
+      await assert.rejects(
+        () => client.fetchJson('https://mock.deye.com/test', 10),
+        (err) => {
+          assert.equal(err.message.includes('The operation was aborted'), false, 'Must not leak English abort string');
+          assert.ok(err.message.includes('перевищено час очікування'), 'Must contain clear Ukrainian message');
+          return true;
+        }
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 describe('System Versioning (SemVer)', () => {

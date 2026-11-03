@@ -434,4 +434,58 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test('gracefully handles today history failure without marking inverter offline', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 95,
+              batteryBv: 640.0,
+              gridRelayStatus: 'on',
+              wirePower: 3500,
+              batteryPower: 0,
+              batteryStatus: 'DISCHARGE',
+              usePower: 3500,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: nowSec
+            })
+          };
+        }
+        if (urlStr.includes('/maintain-s/history/batteryPower/')) {
+          // Simulate slow/aborted history call
+          const err = new Error('перевищено час очікування відповіді (15 сек)');
+          err.name = 'AbortError';
+          throw err;
+        }
+        return { ok: false, status: 404, text: async () => "{}" };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com'
+      };
+
+      const data = await getFreshTelemetry(env);
+      assert.equal(data.is_online, true, 'Inverter must remain online even if history query fails');
+      assert.equal(data.battery_soc, 95);
+      assert.equal(data.is_grid_on, true);
+      assert.equal(data.offline_reason, "");
+
+      const html = renderHTML(data);
+      assert.ok(html.includes('LIVE'), 'HTML must show LIVE badge');
+      assert.equal(html.includes('OFFLINE'), false, 'HTML must not show OFFLINE badge');
+      assert.equal(html.includes('The operation was aborted'), false, 'HTML must never contain raw abort message');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

@@ -117,7 +117,7 @@ export function renderHTML(data) {
       <div class="card status-banner" style="border-left-color: var(--danger);">
         <div class="status-icon" style="background: rgba(239, 68, 68, 0.15); color: var(--danger);">📡</div>
         <div class="status-info">
-          <h2 style="color: #f87171;">Немає зв'язку з інвертором</h2>
+          <h2 style="color: #f87171;">${data.offline_type && data.offline_type.startsWith('CLOUD_') ? 'Сервер Deye Cloud не відповідає' : 'Немає зв\'язку з інвертором'}</h2>
           <p>${data.offline_reason || `Дані не оновлюються з ${data.device_last_seen || data.updated_at}. Можливо, відключено роутер або живлення в щитовій.`}</p>
         </div>
       </div>
