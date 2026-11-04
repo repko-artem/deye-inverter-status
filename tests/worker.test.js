@@ -347,7 +347,7 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
     }
   });
 
-  test('filters out past outage charts with socDrain < 1% while preserving ongoing outage', async () => {
+  test('filters out past outage charts with socDrain <= 1% while preserving ongoing outage', async () => {
     globalCache.clear();
     const originalFetch = globalThis.fetch;
     try {
@@ -387,19 +387,24 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
             status: 200,
             text: async () => JSON.stringify({
               records: [
-                // Event 1 (past, 15 min): battery stayed 100% -> socDrain: 0 (< 1%, MUST BE FILTERED)
-                { dateTime: nowSec - 7200, wirePower: 5000, batteryPower: 0, usePower: 2000, batterySoc: 100 },
+                // Event 1 (past, 15 min): battery stayed 100% -> socDrain: 0 (<= 1%, MUST BE FILTERED)
+                { dateTime: nowSec - 9000, wirePower: 5000, batteryPower: 0, usePower: 2000, batterySoc: 100 },
+                { dateTime: nowSec - 8100, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 100 },
+                { dateTime: nowSec - 7800, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 100 },
+                { dateTime: nowSec - 7500, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 100 },
+                { dateTime: nowSec - 7200, wirePower: 5000, batteryPower: -2000, usePower: 2000, batterySoc: 100 },
+                // Event 1b (past, 15 min): battery 100% -> 99% -> socDrain: 1% (<= 1%, MUST BE FILTERED)
                 { dateTime: nowSec - 6300, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 100 },
-                { dateTime: nowSec - 6000, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 100 },
-                { dateTime: nowSec - 5700, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 100 },
-                { dateTime: nowSec - 5400, wirePower: 5000, batteryPower: -2000, usePower: 2000, batterySoc: 100 },
-                // Event 2 (past, 20 min): battery 100% -> 98% -> socDrain: 2% (>= 1%, MUST BE KEPT)
+                { dateTime: nowSec - 6000, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 99 },
+                { dateTime: nowSec - 5700, wirePower: 0, batteryPower: 3000, usePower: 3000, batterySoc: 99 },
+                { dateTime: nowSec - 5400, wirePower: 5000, batteryPower: -2000, usePower: 2000, batterySoc: 99 },
+                // Event 2 (past, 20 min): battery 100% -> 98% -> socDrain: 2% (> 1%, MUST BE KEPT)
                 { dateTime: nowSec - 4200, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 100 },
                 { dateTime: nowSec - 3900, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 99 },
                 { dateTime: nowSec - 3600, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 98 },
                 { dateTime: nowSec - 3300, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 98 },
                 { dateTime: nowSec - 3000, wirePower: 5000, batteryPower: -2000, usePower: 2000, batterySoc: 98 },
-                // Event 3 (ongoing, 15 min): battery 100% -> 100% -> socDrain: 0 (< 1%, MUST BE KEPT BECAUSE ONGOING)
+                // Event 3 (ongoing, 15 min): battery 100% -> 100% -> socDrain: 0 (<= 1%, MUST BE KEPT BECAUSE ONGOING)
                 { dateTime: nowSec - 900, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 100 },
                 { dateTime: nowSec - 600, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 100 },
                 { dateTime: nowSec - 300, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 100 }
@@ -418,13 +423,13 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
 
       const data = await getFreshTelemetry(env);
 
-      // In journal: all 3 events are recorded
-      assert.equal(data.journal.events.length, 3);
+      // In journal: all 4 events are recorded
+      assert.equal(data.journal.events.length, 4);
 
-      // In outage charts: Event 1 (past 0% drain) must be omitted, Event 2 (past 2% drain) & Event 3 (ongoing 0% drain) must be kept
-      assert.equal(data.outages.length, 2, 'Only meaningful past outages and ongoing outage should have charts');
+      // In outage charts: Event 1 (0% drain) & Event 1b (1% drain) omitted, Event 2 (2% drain) & Event 3 (ongoing 0% drain) kept
+      assert.equal(data.outages.length, 2, 'Only meaningful past outages (>1%) and ongoing outage should have charts');
       const ongoingChart = data.outages.find(o => o.isOngoing);
-      assert.ok(ongoingChart, 'Ongoing outage chart must be preserved even if socDrain < 1%');
+      assert.ok(ongoingChart, 'Ongoing outage chart must be preserved even if socDrain <= 1%');
       assert.equal(ongoingChart.socDrain, 0);
 
       const pastChart = data.outages.find(o => !o.isOngoing);
