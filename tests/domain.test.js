@@ -64,6 +64,32 @@ describe('Domain: Autonomy & Outage Detection (DRY / SRP)', () => {
     assert.ok(stats.statNightKw > 0);
   });
 
+  test('calculateOutageStatistics prioritizes heating season points when HEATING_SEASON_START is configured', () => {
+    const heatingDateSec = 1793923200; // 2026-11-06 00:00 UTC
+    const preHeatingSec = heatingDateSec - 86400; // 2026-11-05
+    const records = [
+      // Pre-heating points (low load: 2000W)
+      { dateTime: preHeatingSec + 36000, wirePower: 0, batteryPower: 2000, usePower: 2000 },
+      { dateTime: preHeatingSec + 36300, wirePower: 0, batteryPower: 2000, usePower: 2000 },
+      { dateTime: preHeatingSec + 36600, wirePower: 0, batteryPower: 2000, usePower: 2000 },
+      // Heating season points (high load with heating pumps: 6000W)
+      { dateTime: heatingDateSec + 36000, wirePower: 0, batteryPower: 6000, usePower: 6000 },
+      { dateTime: heatingDateSec + 36300, wirePower: 0, batteryPower: 6000, usePower: 6000 },
+      { dateTime: heatingDateSec + 36600, wirePower: 0, batteryPower: 6000, usePower: 6000 }
+    ];
+
+    const customConfig = {
+      ...CONFIG,
+      THRESHOLDS: {
+        ...CONFIG.THRESHOLDS,
+        HEATING_SEASON_START: '2026-11-06'
+      }
+    };
+
+    const stats = calculateOutageStatistics(records, customConfig);
+    assert.equal(stats.statActiveKw, 6.0, 'Should use heating season points (6.0 kW), ignoring pre-heating points (2.0 kW)');
+  });
+
   test('simulateTimelineAutonomy calculates realistic day/night combined transition', () => {
     // 49.725 kWh usable energy, starts at 14:00 (Kyiv hour 14)
     // 14:00 to 23:00 = 9h day @ 3.3 kW = 29.7 kWh

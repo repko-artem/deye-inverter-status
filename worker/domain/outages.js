@@ -141,9 +141,21 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
  */
 export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG) {
   const kyivOffsetSec = config.TIME.KYIV_OFFSET_SEC;
-  const { DEFAULT_ACTIVE_KW, DEFAULT_NIGHT_KW, NIGHT_HOUR_START, NIGHT_HOUR_END } = config.THRESHOLDS;
+  const { DEFAULT_ACTIVE_KW, DEFAULT_NIGHT_KW, NIGHT_HOUR_START, NIGHT_HOUR_END, HEATING_SEASON_START } = config.THRESHOLDS;
 
-  const outagePoints = multiDayRecords.filter(r => isOutageRecord(r, config));
+  let heatingCutoffSec = 0;
+  if (HEATING_SEASON_START) {
+    const heatingDate = new Date(`${HEATING_SEASON_START}T00:00:00Z`);
+    heatingCutoffSec = Math.floor(heatingDate.getTime() / 1000) - kyivOffsetSec;
+  }
+
+  const allOutagePoints = multiDayRecords.filter(r => isOutageRecord(r, config));
+  const heatingOutagePoints = heatingCutoffSec > 0
+    ? allOutagePoints.filter(r => r.dateTime >= heatingCutoffSec)
+    : allOutagePoints;
+
+  // Використовуємо точки періоду опалення, якщо їх достатньо (від 3 точок), інакше загальні
+  const outagePoints = heatingOutagePoints.length >= 3 ? heatingOutagePoints : allOutagePoints;
 
   const dayOutageKws = [];
   const nightOutageKws = [];
@@ -170,8 +182,11 @@ export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG)
   if (nightOutageKws.length >= 3) {
     statNightKwVal = (nightOutageKws.reduce((a, b) => a + b, 0) / nightOutageKws.length);
   } else {
+    const recordsForBase = heatingCutoffSec > 0
+      ? multiDayRecords.filter(r => r.dateTime >= heatingCutoffSec)
+      : multiDayRecords;
     const nightBaseKws = [];
-    for (const r of multiDayRecords) {
+    for (const r of (recordsForBase.length >= 24 ? recordsForBase : multiDayRecords)) {
       const d = new Date((r.dateTime + kyivOffsetSec) * 1000);
       const hour = d.getUTCHours();
       const kw = (r.usePower || 0) / 1000.0;
