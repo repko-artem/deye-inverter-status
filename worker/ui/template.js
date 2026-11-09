@@ -378,7 +378,7 @@ export function renderHTML(data) {
           : `Останні дані від інвертора: <strong style="color:#f87171;">${data.device_last_seen || data.updated_at}</strong>`}
       </div>
       <div style="font-size:0.68rem; opacity:0.65; margin: 3px 0 6px;">
-        ${isOnline ? 'Автооновлення кожні 60 сек' : 'Опитування хмари щохвилини (очікування сигналу від інвертора)'}
+        ${isOnline ? 'Автооновлення кожні 5 хв' : 'Опитування хмари кожні 5 хв (очікування сигналу від інвертора)'}
       </div>
       <button class="btn" onclick="location.reload()">🔄 Оновити дані</button>
       <div style="margin-top:6px; font-size:0.68rem; opacity:0.55;">ОСББ «Новодарницьке» • Моніторинг 24/7</div>
@@ -386,7 +386,7 @@ export function renderHTML(data) {
     </div>
   </div>
   <script>
-    setTimeout(() => location.reload(), 60000);
+    setTimeout(() => location.reload(), 300000);
   </script>
 </body>
 </html>`;

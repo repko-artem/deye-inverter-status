@@ -141,6 +141,8 @@ describe('Chart & HTML Rendering', () => {
     assert.ok(html.includes('Триває 30 хв'));
     assert.ok(html.includes('ЗАЛИШОК АВТОНОМНОСТІ'));
     assert.ok(html.includes('Повний резерв при 100% АКБ'));
+    assert.ok(html.includes('Автооновлення кожні 5 хв'));
+    assert.ok(html.includes('setTimeout(() => location.reload(), 300000)'));
     assert.ok(!html.includes('undefined'));
     assert.ok(!html.includes('NaN'));
   });
