@@ -88,7 +88,20 @@ export class TelemetryService {
       const multiDayRecords = [...pastRecordsChronological, ...todayRecords];
       const records24h = multiDayRecords.slice(-288); // 24h = 288 точок по 5 хв
 
-      // 3.5. Перевірка статусу зв'язку інвертора / даталогера
+      // 3.5. Базові показники інвертора (потрібні для оцінки статусу мережі та батареї)
+      const soc = disp.batterySoc ?? 100;
+      const voltage = disp.batteryBv ?? 645.0;
+      const is_grid_on = (disp.gridRelayStatus === "on" || (disp.wirePower ?? 0) > this.config.THRESHOLDS.GRID_MIN_W);
+      const rawBatteryPower = disp.batteryPower ?? 0;
+
+      const is_charging = (disp.batteryStatus === "CHARGE" || rawBatteryPower < -100);
+      const charge_power_kw = is_charging ? Math.abs(rawBatteryPower / 1000.0) : 0;
+      const discharge_power_kw = !is_charging ? Math.max(0, rawBatteryPower / 1000.0) : 0;
+
+      const use_power_kw = (disp.usePower ?? 2000) / 1000.0;
+      const grid_power_kw = (disp.wirePower ?? 12000) / 1000.0;
+
+      // 3.6. Перевірка статусу зв'язку інвертора / даталогера
       const nowSec = Math.floor(Date.now() / 1000);
       const lastRecord = todayRecords.length > 0 ? todayRecords[todayRecords.length - 1] : null;
       const lastRecordSec = lastRecord ? lastRecord.dateTime : null;
@@ -101,6 +114,7 @@ export class TelemetryService {
       let device_offline_minutes = 0;
       let device_last_seen = nowStr;
       let offline_reason = "";
+      let offline_type = "";
 
       if (lastDeviceSec) {
         device_offline_minutes = Math.max(0, Math.round((nowSec - lastDeviceSec) / 60));
@@ -123,21 +137,14 @@ export class TelemetryService {
           ? `${Math.floor(device_offline_minutes / 60)} год ${device_offline_minutes % 60 ? `${device_offline_minutes % 60} хв` : ''}`.trim()
           : `${device_offline_minutes} хв`;
 
-        offline_reason = `Немає зв'язку з інвертором ${durStr ? `(понад ${durStr})` : ''}. Останній зв'язок був ${device_last_seen}. Можливо, відключено роутер або живлення в щитовій.`;
+        if (!is_grid_on && soc <= (this.config.BATTERY.SAFETY_BUFFER_SOC || 10)) {
+          offline_type = "BATTERY_DEPLETED";
+          offline_reason = `Акумулятор розрядився до мінімального порогу (${soc}%). Резервне живлення будинку вимкнено інвертором. Сигнал відсутній ${durStr ? `понад ${durStr}` : ''} (останній зв'язок о ${device_last_seen}).`;
+        } else {
+          offline_type = "DEVICE_OFFLINE";
+          offline_reason = `Немає зв'язку з інвертором: сигнал відсутній ${durStr ? `понад ${durStr}` : ''}. Останній зв'язок був ${device_last_seen}. Можливо, відключено роутер або живлення в щитовій.`;
+        }
       }
-
-      // 4. Базові показники інвертора
-      const soc = disp.batterySoc ?? 100;
-      const voltage = disp.batteryBv ?? 645.0;
-      const is_grid_on = (disp.gridRelayStatus === "on" || (disp.wirePower ?? 0) > this.config.THRESHOLDS.GRID_MIN_W);
-      const rawBatteryPower = disp.batteryPower ?? 0;
-
-      const is_charging = (disp.batteryStatus === "CHARGE" || rawBatteryPower < -100);
-      const charge_power_kw = is_charging ? Math.abs(rawBatteryPower / 1000.0) : 0;
-      const discharge_power_kw = !is_charging ? Math.max(0, rawBatteryPower / 1000.0) : 0;
-
-      const use_power_kw = (disp.usePower ?? 2000) / 1000.0;
-      const grid_power_kw = (disp.wirePower ?? 12000) / 1000.0;
 
       // 5. Розрахунок часу до повного заряду
       let time_to_full_formatted = "--";
@@ -198,6 +205,7 @@ export class TelemetryService {
         is_online,
         device_last_seen,
         device_offline_minutes,
+        offline_type,
         offline_reason,
         updated_at: nowStr,
         is_grid_on,

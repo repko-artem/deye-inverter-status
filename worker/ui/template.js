@@ -115,9 +115,15 @@ export function renderHTML(data) {
     <!-- STATUS BANNER -->
     ${!isOnline ? `
       <div class="card status-banner" style="border-left-color: var(--danger);">
-        <div class="status-icon" style="background: rgba(239, 68, 68, 0.15); color: var(--danger);">📡</div>
+        <div class="status-icon" style="background: rgba(239, 68, 68, 0.15); color: var(--danger);">${data.offline_type === 'BATTERY_DEPLETED' ? '🪫' : '📡'}</div>
         <div class="status-info">
-          <h2 style="color: #f87171;">${data.offline_type && data.offline_type.startsWith('CLOUD_') ? 'Сервер Deye Cloud не відповідає' : 'Немає зв\'язку з інвертором'}</h2>
+          <h2 style="color: #f87171;">
+            ${data.offline_type === 'BATTERY_DEPLETED' 
+              ? `Резерв батареї вичерпано (${data.battery_soc}%)` 
+              : (data.offline_type && data.offline_type.startsWith('CLOUD_') 
+                ? 'Сервер Deye Cloud не відповідає' 
+                : 'Немає зв\'язку з інвертором')}
+          </h2>
           <p>${data.offline_reason || `Дані не оновлюються з ${data.device_last_seen || data.updated_at}. Можливо, відключено роутер або живлення в щитовій.`}</p>
         </div>
       </div>
@@ -357,11 +363,17 @@ export function renderHTML(data) {
     `).join('')}
 
     <div class="tip-box" ${!isOnline ? 'style="background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.25); color: #fecaca;"' : ''}>
-      <div>${!isOnline ? '📡' : '💡'}</div>
+      <div>${!isOnline ? (data.offline_type === 'BATTERY_DEPLETED' ? '🪫' : '📡') : '💡'}</div>
       <div>
-        ${!isOnline ? `
-          <strong>Увага для мешканців / чергового:</strong> Втрачено зв'язок з даталогером інвертора. Найчастіша причина — відключення інтернет-роутера в щитовій або збій каналу зв'язку. Сама система резервного живлення будинку продовжує працювати штатно в автоматичному режимі.
-        ` : (data.is_grid_on ? (data.is_charging ? `
+        ${!isOnline ? (
+          data.offline_type === 'BATTERY_DEPLETED' ? `
+            <strong>Увага для мешканців / чергового:</strong> Резерв акумулятора повністю вичерпано (досягнуто безпечний поріг 10%). Інвертор автоматично знеструмив будинок (включно з роутером у щитовій) для захисту батареї від пошкодження. Живлення насосів, ліфтів та освітлення відновиться автоматично, щойно з'явиться напруга в міській електромережі або буде запущено генератор.
+          ` : (data.offline_type && data.offline_type.startsWith('CLOUD_') ? `
+            <strong>Увага для мешканців / чергового:</strong> Сервер моніторингу Deye Cloud тимчасово не відповідає. Обладнання в щитовій продовжує працювати штатно в автоматичному режимі.
+          ` : `
+            <strong>Увага для мешканців / чергового:</strong> Втрачено інтернет-зв'язок із даталогером інвертора. Найчастіша причина — збій роутера або каналу зв'язку в щитовій. Якщо в міській мережі є напруга або в батареї залишається заряд, резервне живлення продовжує працювати в автоматичному режимі.
+          `)
+        ) : (data.is_grid_on ? (data.is_charging ? `
           <strong>Статус:</strong> Міська мережа активна. Акумулятор заряджається високою потужністю, щоб бути готовим до можливих відключень.
         ` : `
           <strong>Статус:</strong> Міська мережа активна. Акумулятор повністю заряджений (100%) та готовий до захисту критичної інфраструктури.

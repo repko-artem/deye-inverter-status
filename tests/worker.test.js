@@ -349,6 +349,62 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
     }
   });
 
+  test('correctly identifies BATTERY_DEPLETED when connection lost with battery <= 10% during blackout', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 10,
+              batteryBv: 606.8,
+              gridRelayStatus: 'off',
+              wirePower: 0,
+              batteryPower: 6980,
+              batteryStatus: 'DISCHARGE',
+              usePower: 6500,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: nowSec - 1200 // 20 min ago
+            })
+          };
+        }
+        if (urlStr.includes('/maintain-s/history/batteryPower/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              records: [
+                { dateTime: nowSec - 1200, wirePower: 0, batteryPower: 6980, usePower: 6500, batterySoc: 10 }
+              ]
+            })
+          };
+        }
+        return { ok: false, status: 404, text: async () => "{}" };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com'
+      };
+
+      const data = await getFreshTelemetry(env);
+      assert.equal(data.is_online, false);
+      assert.equal(data.offline_type, 'BATTERY_DEPLETED');
+      assert.ok(data.offline_reason.includes('Резервне живлення будинку вимкнено інвертором'));
+
+      const html = renderHTML(data);
+      assert.ok(html.includes('Резерв батареї вичерпано (10%)'));
+      assert.ok(html.includes('Резерв акумулятора повністю вичерпано'));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test('filters out past outage charts with socDrain <= 1% while preserving ongoing outage', async () => {
     globalCache.clear();
     const originalFetch = globalThis.fetch;
