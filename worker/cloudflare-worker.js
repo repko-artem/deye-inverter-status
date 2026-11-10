@@ -11,6 +11,7 @@ import { renderHTML } from './ui/template.js';
 import { calculateAutonomy, isOutageRecord, calculateDischargeRate, calculate24hDischarge, simulateTimelineAutonomy } from './domain/autonomy.js';
 import { analyzeMultiDayOutages, calculateOutageStatistics } from './domain/outages.js';
 import { buildOutageChart } from './ui/chart.js';
+import { resolveSystemState, SystemStateId, SystemState } from './domain/system-state.js';
 
 /**
  * Отримання свіжої телеметрії (з кешуванням на рівні інстансу)
@@ -104,5 +105,8 @@ export {
   renderHTML,
   isOutageRecord,
   calculateDischargeRate,
-  calculate24hDischarge
+  calculate24hDischarge,
+  resolveSystemState,
+  SystemStateId,
+  SystemState
 };

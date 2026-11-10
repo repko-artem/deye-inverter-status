@@ -3,12 +3,13 @@
  * Ізольований презентаційний шар (UI / View).
  */
 
+import { resolveSystemState, SystemStateId } from '../domain/system-state.js';
+
 export function renderHTML(data) {
-  const isOnline = (data.is_online !== false);
+  const state = resolveSystemState(data);
+  const isOnline = state.isOnline;
   const soc = data.battery_soc ?? 0;
-  const strokeColor = !isOnline 
-    ? '#f59e0b' 
-    : (data.is_charging ? '#10b981' : (soc > 50 ? '#3b82f6' : (soc > 25 ? '#f59e0b' : '#ef4444')));
+  const strokeColor = state.gaugeStrokeColor;
   const offset = 502 - (soc / 100) * 502;
   const outages = data.outages || [];
   const journal = data.journal || { count: 0, totalHoursFormatted: "0 хв", minSoc: 100 };
@@ -54,8 +55,8 @@ export function renderHTML(data) {
     @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
     .card { background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--card-border); border-radius: 20px; padding: 18px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
     
-    .status-banner { display: flex; align-items: center; gap: 14px; border-left: 5px solid ${data.is_grid_on ? 'var(--success)' : 'var(--danger)'}; }
-    .status-icon { width: 48px; height: 48px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; background: ${data.is_grid_on ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}; color: ${data.is_grid_on ? 'var(--success)' : 'var(--danger)'}; flex-shrink: 0; }
+    .status-banner { display: flex; align-items: center; gap: 14px; border-left: 5px solid ${state.bannerBorderColor}; }
+    .status-icon { width: 48px; height: 48px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; background: ${state.bannerIconBg}; color: ${state.bannerIconColor}; flex-shrink: 0; }
     .status-info h2 { font-size: 1.08rem; font-weight: 700; }
     .status-info p { font-size: 0.8rem; color: var(--text-muted); }
 
@@ -70,7 +71,7 @@ export function renderHTML(data) {
 
     .forecast-box { background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(255,255,255,0.05); border-radius: 16px; padding: 14px; text-align: center; }
     .forecast-title { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; font-weight: 600; letter-spacing: 0.5px; }
-    .forecast-main { font-size: 1.45rem; font-weight: 800; color: ${data.is_charging ? '#34d399' : '#60a5fa'}; }
+    .forecast-main { font-size: 1.45rem; font-weight: 800; color: ${state.id === SystemStateId.GRID_CHARGING ? '#34d399' : '#60a5fa'}; }
     .forecast-sub { font-size: 0.8rem; color: var(--text-muted); margin-top: 6px; }
 
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -103,47 +104,19 @@ export function renderHTML(data) {
         <h1>ОСББ «Новодарницьке»</h1>
         <p>Резервне живлення будинку • 50 кВт</p>
       </div>
-      ${isOnline ? `
-        <div class="live-badge"><div class="live-dot"></div> LIVE</div>
-      ` : `
-        <div class="live-badge" style="background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); color: #f87171;">
-          <div class="live-dot" style="background: #ef4444; box-shadow: 0 0 10px #ef4444;"></div> OFFLINE
-        </div>
-      `}
+      <div class="live-badge" style="background: ${state.badgeBg}; border-color: ${state.badgeBorder}; color: ${state.badgeColor};">
+        <div class="live-dot" style="background: ${state.dotColor}; box-shadow: 0 0 10px ${state.dotColor}; ${!state.isOnline ? 'animation:none;' : ''}"></div> ${state.badgeText}
+      </div>
     </div>
 
     <!-- STATUS BANNER -->
-    ${!isOnline ? `
-      <div class="card status-banner" style="border-left-color: var(--danger);">
-        <div class="status-icon" style="background: rgba(239, 68, 68, 0.15); color: var(--danger);">${data.offline_type === 'BATTERY_DEPLETED' ? '🪫' : '📡'}</div>
-        <div class="status-info">
-          <h2 style="color: #f87171;">
-            ${data.offline_type === 'BATTERY_DEPLETED' 
-              ? `Резерв батареї вичерпано (${data.battery_soc}%)` 
-              : (data.offline_type && data.offline_type.startsWith('CLOUD_') 
-                ? 'Сервер Deye Cloud не відповідає' 
-                : 'Немає зв\'язку з інвертором')}
-          </h2>
-          <p>${data.offline_reason || `Дані не оновлюються з ${data.device_last_seen || data.updated_at}. Можливо, відключено роутер або живлення в щитовій.`}</p>
-        </div>
+    <div class="card status-banner">
+      <div class="status-icon">${state.bannerIcon}</div>
+      <div class="status-info">
+        <h2 style="color: ${state.bannerIconColor};">${state.bannerTitle}</h2>
+        <p>${state.bannerSubtitle}</p>
       </div>
-    ` : `
-      <div class="card status-banner">
-        <div class="status-icon">${data.is_charging ? '⚡' : (data.is_grid_on ? '🟢' : '🔴')}</div>
-        <div class="status-info">
-          <h2>
-            ${data.is_charging ? 'Міська мережа активна • Заряд АКБ' : (data.is_grid_on ? 'Міська мережа активна' : `Відключення світла ${outageStartStr}`.trim())}
-          </h2>
-          <p>
-            ${data.is_charging 
-              ? `Потужність заряджання: +${data.charge_power_kw.toFixed(1)} кВт (напруга: ${data.battery_voltage} В)` 
-              : (data.is_grid_on 
-                ? 'Батарея в режимі очікування (100% готовність)' 
-                : `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Старт із ${currOutage ? currOutage.startSoc : soc}%`)}
-          </p>
-        </div>
-      </div>
-    `}
+    </div>
 
     <!-- HERO SECTION -->
     <div class="card" style="text-align:center;">
@@ -154,7 +127,7 @@ export function renderHTML(data) {
         </svg>
         <div class="gauge-text">
           <div><span class="gauge-val">${data.battery_soc ?? '--'}</span><span class="gauge-unit">%</span></div>
-          <div class="gauge-sub">${!isOnline ? '⚠️ Немає зв\'язку' : (data.is_charging ? '⚡ Заряджання' : (data.is_grid_on ? '🟢 Готовність' : '🔴 Розряд АКБ'))}</div>
+          <div class="gauge-sub">${state.gaugeSubtext}</div>
         </div>
       </div>
 
@@ -362,24 +335,10 @@ export function renderHTML(data) {
       </div>
     `).join('')}
 
-    <div class="tip-box" ${!isOnline ? 'style="background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.25); color: #fecaca;"' : ''}>
-      <div>${!isOnline ? (data.offline_type === 'BATTERY_DEPLETED' ? '🪫' : '📡') : '💡'}</div>
+    <div class="tip-box" style="background: ${state.tipBg}; border-color: ${state.tipBorder}; color: ${state.tipColor};">
+      <div>${state.tipIcon}</div>
       <div>
-        ${!isOnline ? (
-          data.offline_type === 'BATTERY_DEPLETED' ? `
-            <strong>Увага для мешканців / чергового:</strong> Резерв акумулятора повністю вичерпано (досягнуто безпечний поріг 10%). Інвертор автоматично знеструмив будинок (включно з роутером у щитовій) для захисту батареї від пошкодження. Живлення насосів, ліфтів та освітлення відновиться автоматично, щойно з'явиться напруга в міській електромережі або буде запущено генератор.
-          ` : (data.offline_type && data.offline_type.startsWith('CLOUD_') ? `
-            <strong>Увага для мешканців / чергового:</strong> Сервер моніторингу Deye Cloud тимчасово не відповідає. Обладнання в щитовій продовжує працювати штатно в автоматичному режимі.
-          ` : `
-            <strong>Увага для мешканців / чергового:</strong> Втрачено інтернет-зв'язок із даталогером інвертора. Найчастіша причина — збій роутера або каналу зв'язку в щитовій. Якщо в міській мережі є напруга або в батареї залишається заряд, резервне живлення продовжує працювати в автоматичному режимі.
-          `)
-        ) : (data.is_grid_on ? (data.is_charging ? `
-          <strong>Статус:</strong> Міська мережа активна. Акумулятор заряджається високою потужністю, щоб бути готовим до можливих відключень.
-        ` : `
-          <strong>Статус:</strong> Міська мережа активна. Акумулятор повністю заряджений (100%) та готовий до захисту критичної інфраструктури.
-        `) : `
-          <strong>Порада для мешканців:</strong> Будинок перейшов на резервне живлення від батареї (працюють насоси води, опалення, ліфти та чергове освітлення). Якщо є можливість піднятися сходами на свій поверх — це суттєво заощаджує заряд для безперебійного водопостачання та тепла для всього будинку!
-        `)}
+        ${state.tipHtml}
       </div>
     </div>
 

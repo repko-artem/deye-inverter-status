@@ -4,6 +4,7 @@ import { globalCache } from './cache.js';
 import { calculateAutonomy, calculateDischargeRate, calculate24hDischarge } from '../domain/autonomy.js';
 import { analyzeMultiDayOutages, calculateOutageStatistics } from '../domain/outages.js';
 import { buildOutageChart } from '../ui/chart.js';
+import { resolveSystemState } from '../domain/system-state.js';
 
 /**
  * Генерує список дат за минулі дні для побудови багатоденного графіка
@@ -200,7 +201,7 @@ export class TelemetryService {
         this.config
       );
 
-      return {
+      const rawResult = {
         version: this.config.APP_VERSION,
         is_online,
         device_last_seen,
@@ -248,6 +249,10 @@ export class TelemetryService {
           multiDayCount: multiDayRecords.length
         }
       };
+
+      const systemState = resolveSystemState(rawResult, { safetyBufferSoc: this.config.BATTERY.SAFETY_BUFFER_SOC });
+      rawResult.system_state = systemState.id;
+      return rawResult;
     } catch (e) {
       const rawMsg = (e && e.message) ? e.message : 'помилка мережі';
       const cleanErrMsg = rawMsg
@@ -263,6 +268,7 @@ export class TelemetryService {
           ...recent,
           is_online: false,
           offline_type: "CLOUD_ERROR",
+          system_state: "CLOUD_ERROR",
           offline_reason: `Сервер Deye Cloud тимчасово не відповів (${cleanErrMsg || 'перевищено час очікування'}). Відображено збережені дані.`,
           device_offline_minutes: Math.max(recent.device_offline_minutes || 0, Math.round(this.cache.getAgeSec() / 60))
         };
@@ -271,6 +277,7 @@ export class TelemetryService {
         version: this.config.APP_VERSION,
         is_online: false,
         offline_type: "CLOUD_UNAVAILABLE",
+        system_state: "CLOUD_ERROR",
         offline_reason: `Не вдалося зв'язатися з сервером Deye Cloud (${cleanErrMsg || 'перевищено час очікування'}).`,
         worker_error: cleanErrMsg,
         worker_stack: (e ? e.stack : ""),
