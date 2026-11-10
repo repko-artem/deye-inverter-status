@@ -338,7 +338,7 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
 
       assert.equal(data.is_online, false, 'Must be flagged as offline');
       assert.ok(data.device_offline_minutes >= 115, 'Must report ~120 min offline');
-      assert.ok(data.offline_reason.includes("Немає зв'язку з інвертором"));
+      assert.ok(data.offline_reason.includes("Сигнал відсутній"));
       assert.equal(data.is_charging, false);
 
       const html = renderHTML(data);
