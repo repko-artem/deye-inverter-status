@@ -139,7 +139,7 @@ export class TelemetryService {
 
         if (!is_grid_on && soc <= (this.config.BATTERY.SAFETY_BUFFER_SOC || 10)) {
           offline_type = "BATTERY_DEPLETED";
-          offline_reason = `Акумулятор розрядився до мінімального порогу (${soc}%). Резервне живлення будинку вимкнено інвертором. Сигнал відсутній ${durStr ? `понад ${durStr}` : ''} (останній зв'язок о ${device_last_seen}).`;
+          offline_reason = `Акумулятор розрядився до мінімального порогу (${soc}%). Резервне живлення будинку вимкнено інвертором. Сигнал відсутній ${durStr ? `понад ${durStr}` : ''} (останній зв'язок: ${device_last_seen}).`;
         } else {
           offline_type = "DEVICE_OFFLINE";
           offline_reason = `Немає зв'язку з інвертором: сигнал відсутній ${durStr ? `понад ${durStr}` : ''}. Останній зв'язок був ${device_last_seen}. Можливо, відключено роутер або живлення в щитовій.`;
