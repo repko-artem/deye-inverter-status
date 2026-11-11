@@ -12,9 +12,12 @@ export const NOTIFICATION_THRESHOLDS = Object.freeze([90, 80, 70, 60, 50, 40, 30
 export async function sendTelegramMessage(botToken, chatId, text) {
   if (!botToken || !chatId || !text) return false;
 
-  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  const cleanToken = String(botToken).trim();
+  const cleanChatId = String(chatId).trim();
+
+  const url = `https://api.telegram.org/bot${cleanToken}/sendMessage`;
   const body = {
-    chat_id: chatId,
+    chat_id: cleanChatId,
     text,
     parse_mode: 'HTML',
     disable_web_page_preview: true
@@ -103,8 +106,8 @@ export function formatRestorationMessage(data, previousOutageDurMin) {
  * @param {Object} env Змінні середовища Cloudflare (NOTIFY_KV, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
  */
 export async function processTelegramNotifications(data, env) {
-  const botToken = env.TELEGRAM_BOT_TOKEN;
-  const chatId = env.TELEGRAM_CHAT_ID;
+  const botToken = env.TELEGRAM_BOT_TOKEN ? String(env.TELEGRAM_BOT_TOKEN).trim() : '';
+  const chatId = env.TELEGRAM_CHAT_ID ? String(env.TELEGRAM_CHAT_ID).trim() : '';
   const kv = env.NOTIFY_KV;
 
   if (!botToken || !chatId) {
@@ -123,11 +126,17 @@ export async function processTelegramNotifications(data, env) {
 
   if (kv) {
     try {
-      const stored = await kv.get('notification_state', 'json');
-      if (stored) state = stored;
+      const stored = await kv.get('notification_state', { type: 'json' });
+      if (stored) {
+        state = typeof stored === 'string' ? JSON.parse(stored) : stored;
+      }
     } catch (e) {
       console.error('Failed to read notification_state from KV:', e);
     }
+  }
+
+  if (!Array.isArray(state.notifiedLevels)) {
+    state.notifiedLevels = [];
   }
 
   const isGridOn = Boolean(data.is_grid_on);
