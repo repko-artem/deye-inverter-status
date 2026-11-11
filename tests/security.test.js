@@ -38,6 +38,7 @@ describe('Security & Secrets Leak Prevention', () => {
   test('no hardcoded JWT tokens or API keys exist in committed code', () => {
     const jwtPattern = /eyJ[a-zA-Z0-9_\-]{30,}\.[a-zA-Z0-9_\-]{30,}/;
     const cfTokenPattern = /cfut_[a-zA-Z0-9_\-]{30,}/;
+    const tgBotTokenPattern = /\b\d{8,11}:[a-zA-Z0-9_\-]{30,}\b/;
 
     for (const file of allFiles) {
       // Skip test file itself and documentation examples
@@ -46,6 +47,7 @@ describe('Security & Secrets Leak Prevention', () => {
       const content = fs.readFileSync(file, 'utf-8');
       assert.ok(!jwtPattern.test(content), `Possible JWT token found in: ${file}`);
       assert.ok(!cfTokenPattern.test(content), `Cloudflare token found in: ${file}`);
+      assert.ok(!tgBotTokenPattern.test(content), `Telegram Bot token found in: ${file}`);
     }
   });
 });
