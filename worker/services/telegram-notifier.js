@@ -68,7 +68,7 @@ export function formatThresholdMessage(threshold, data) {
     footerNote = '\n\n⚠️ <i>Критичний рівень заряду. Працюють виключно насоси опалення, водопостачання та чергове освітлення.</i>';
   }
 
-  return `${icon} <b>Рівень заряду батареї: ${threshold}%</b> (фактично ${soc}%)
+  return `${icon} <b>Рівень заряду батареї: ${soc}%</b>
 
 ⏳ Залишок автономності: <b>~${estHours}</b>
 🕒 Вистачить орієнтовно: <b>${estUntil}</b>

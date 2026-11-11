@@ -18,7 +18,7 @@ test('Telegram Notification: formatting', async (t) => {
     };
 
     const msg = formatThresholdMessage(90, data);
-    assert.ok(msg.includes('90%</b> (фактично 89%)'));
+    assert.ok(msg.includes('Рівень заряду батареї: 89%</b>'));
     assert.ok(msg.includes('~6 – 7 год'));
     assert.ok(msg.includes('5.2 кВт'));
     assert.ok(msg.includes('1 год 15 хв'));
@@ -136,7 +136,7 @@ test('Telegram Notification: processTelegramNotifications workflow', async (t) =
       current_outage: { durationMin: 45, startTimestampSec: Math.floor(Date.now() / 1000) - 2700 }
     }, env);
     assert.equal(sentMessages.length, 1);
-    assert.ok(sentMessages[0].text.includes('90%'));
+    assert.ok(sentMessages[0].text.includes('89%'));
     assert.deepEqual(res2.state.notifiedLevels, [90]);
 
     // 3. Next tick: SOC is 88% -> 90% is already notified, no new message!
@@ -158,7 +158,7 @@ test('Telegram Notification: processTelegramNotifications workflow', async (t) =
       use_power_kw: 5.0
     }, env);
     assert.equal(sentMessages.length, 1);
-    assert.ok(sentMessages[0].text.includes('80%'));
+    assert.ok(sentMessages[0].text.includes('79%'));
     assert.deepEqual(res4.state.notifiedLevels, [90, 80]);
 
     // 5. Grid restores! Since we had notifications, send restoration alert!
