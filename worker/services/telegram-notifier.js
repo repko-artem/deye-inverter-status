@@ -4,7 +4,7 @@
  * та сповіщення про відновлення міської електромережі.
  */
 
-export const NOTIFICATION_THRESHOLDS = Object.freeze([90, 80, 70, 60, 50, 40, 30, 20, 10]);
+export const NOTIFICATION_THRESHOLDS = Object.freeze([80, 60, 40, 20, 10]);
 
 /**
  * Відправка повідомлення в Telegram Bot API

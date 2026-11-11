@@ -125,7 +125,7 @@ test('Telegram Notification: processTelegramNotifications workflow', async (t) =
     const res1 = await processTelegramNotifications({ is_grid_on: true, battery_soc: 100 }, env);
     assert.equal(sentMessages.length, 0);
 
-    // 2. Blackout starts: SOC drops to 89% (crosses 90%)
+    // 2. Blackout starts: SOC drops to 89% (above 80% threshold -> no message yet)
     sentMessages.length = 0;
     const res2 = await processTelegramNotifications({
       is_grid_on: false,
@@ -135,44 +135,57 @@ test('Telegram Notification: processTelegramNotifications workflow', async (t) =
       use_power_kw: 5.0,
       current_outage: { durationMin: 45, startTimestampSec: Math.floor(Date.now() / 1000) - 2700 }
     }, env);
-    assert.equal(sentMessages.length, 1);
-    assert.ok(sentMessages[0].text.includes('89%'));
-    assert.deepEqual(res2.state.notifiedLevels, [90]);
+    assert.equal(sentMessages.length, 0);
+    assert.deepEqual(res2.state.notifiedLevels, []);
 
-    // 3. Next tick: SOC is 88% -> 90% is already notified, no new message!
+    // 3. SOC drops to 79% (crosses 80%) -> notifies 80%!
     sentMessages.length = 0;
     const res3 = await processTelegramNotifications({
       is_grid_on: false,
-      battery_soc: 88,
-      est_hours_formatted: '7 – 8 год',
+      battery_soc: 79,
+      est_hours_formatted: '6 – 7 год',
+      est_time_until: 'до 02:30',
+      use_power_kw: 5.0,
+      current_outage: { durationMin: 70, startTimestampSec: Math.floor(Date.now() / 1000) - 4200 }
+    }, env);
+    assert.equal(sentMessages.length, 1);
+    assert.ok(sentMessages[0].text.includes('79%'));
+    assert.deepEqual(res3.state.notifiedLevels, [80]);
+
+    // 4. Next tick: SOC is 78% -> 80% is already notified, no new message!
+    sentMessages.length = 0;
+    const res4 = await processTelegramNotifications({
+      is_grid_on: false,
+      battery_soc: 78,
+      est_hours_formatted: '6 – 7 год',
       use_power_kw: 5.0
     }, env);
     assert.equal(sentMessages.length, 0);
 
-    // 4. SOC drops to 79% (crosses 80%) -> notifies 80%!
+    // 5. SOC drops to 59% (crosses 60%) -> notifies 60%!
     sentMessages.length = 0;
-    const res4 = await processTelegramNotifications({
+    const res5 = await processTelegramNotifications({
       is_grid_on: false,
-      battery_soc: 79,
-      est_hours_formatted: '6 – 7 год',
+      battery_soc: 59,
+      est_hours_formatted: '4 – 5 год',
       use_power_kw: 5.0
     }, env);
     assert.equal(sentMessages.length, 1);
-    assert.ok(sentMessages[0].text.includes('79%'));
-    assert.deepEqual(res4.state.notifiedLevels, [90, 80]);
+    assert.ok(sentMessages[0].text.includes('59%'));
+    assert.deepEqual(res5.state.notifiedLevels, [80, 60]);
 
-    // 5. Grid restores! Since we had notifications, send restoration alert!
+    // 6. Grid restores! Since we had notifications, send restoration alert!
     sentMessages.length = 0;
-    const res5 = await processTelegramNotifications({
+    const res6 = await processTelegramNotifications({
       is_grid_on: true,
-      battery_soc: 79,
+      battery_soc: 59,
       use_power_kw: 5.0,
       charge_power_kw: 10.0
     }, env);
     assert.equal(sentMessages.length, 1);
     assert.ok(sentMessages[0].text.includes('Міську електромережу відновлено'));
-    assert.equal(res5.state.isOutage, false);
-    assert.deepEqual(res5.state.notifiedLevels, []);
+    assert.equal(res6.state.isOutage, false);
+    assert.deepEqual(res6.state.notifiedLevels, []);
 
     // 6. Micro-sag (10 min at 100% SOC) -> no threshold crossed, no restoration alert on restore!
     sentMessages.length = 0;
