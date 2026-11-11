@@ -36,7 +36,22 @@ test('Telegram Notification: formatting', async (t) => {
 
     const msg = formatThresholdMessage(20, data);
     assert.ok(msg.includes('⚠️'));
-    assert.ok(msg.includes('Рекомендуємо за можливості користуватися сходами'));
+    assert.ok(msg.includes('Критичний рівень заряду'));
+  });
+
+  await t.test('formatThresholdMessage includes elevator shutdown warning at 40%', () => {
+    const data = {
+      battery_soc: 40,
+      est_hours_formatted: '3 – 4 год',
+      est_time_until: 'до 01:15',
+      use_power_kw: 4.8,
+      current_outage: { durationMin: 220 }
+    };
+
+    const msg = formatThresholdMessage(40, data);
+    assert.ok(msg.includes('40%'));
+    assert.ok(msg.includes('🛗'));
+    assert.ok(msg.includes('Ліфти будуть відключені'));
   });
 
   await t.test('formatThresholdMessage includes shutdown warning at 10%', () => {
