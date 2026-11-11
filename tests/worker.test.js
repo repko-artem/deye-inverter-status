@@ -10,7 +10,7 @@ describe('Outage Journal Analysis (analyzeMultiDayOutages)', () => {
     assert.equal(result.currentOutage, null);
   });
 
-  test('filters out short outages <= 10 minutes (2 points of 5 min)', () => {
+  test('captures short voltage sag events >= 5 minutes (e.g. 2 points of 5 min)', () => {
     const baseTimeSec = 1792060000;
     // 2 points where wirePower is 0 and batteryPower is 2000W (= 10 minutes)
     const records = [
@@ -21,7 +21,9 @@ describe('Outage Journal Analysis (analyzeMultiDayOutages)', () => {
     ];
 
     const result = analyzeMultiDayOutages(records, new Date((baseTimeSec + 1200) * 1000));
-    assert.equal(result.validEvents.length, 0, '10-minute outage should be filtered out (>10 min required)');
+    assert.equal(result.validEvents.length, 1, '10-minute outage should be captured as voltage sag');
+    assert.equal(result.validEvents[0].eventType, 'VOLTAGE_SAG');
+    assert.equal(result.validEvents[0].durationMin, 10);
   });
 
   test('captures completed outages longer than 10 minutes', () => {
