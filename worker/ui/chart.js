@@ -93,6 +93,11 @@ export function buildOutageChart(e, records, eventNumber, config = CONFIG) {
 
   return {
     eventNum: eventNumber,
+    eventType: e.eventType || 'BLACKOUT',
+    eventLabel: e.eventLabel || '🔴 Відключення ДТЕК',
+    eventBadgeColor: e.eventBadgeColor || '#ef4444',
+    eventBadgeBg: e.eventBadgeBg || 'rgba(239, 68, 68, 0.15)',
+    eventDescription: e.eventDescription || '',
     isOngoing: e.isOngoing || false,
     dayLabel: e.dayLabel || "",
     start: e.start,

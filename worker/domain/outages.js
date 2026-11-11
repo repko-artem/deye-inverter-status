@@ -2,6 +2,44 @@ import { CONFIG } from '../config.js';
 import { isOutageRecord } from './autonomy.js';
 
 /**
+ * Типи подій живлення
+ */
+export const OutageType = Object.freeze({
+  BLACKOUT: 'BLACKOUT',
+  VOLTAGE_SAG: 'VOLTAGE_SAG'
+});
+
+/**
+ * Класифікує подію відключення за характером (блекаут ДТЕК vs просідання/стрибок напруги).
+ */
+export function classifyOutageEvent(event, config = CONFIG) {
+  const maxSagMin = config.THRESHOLDS?.VOLTAGE_SAG_MAX_MINUTES ?? 25;
+  const maxSagSoc = config.THRESHOLDS?.VOLTAGE_SAG_MAX_SOC_DRAIN ?? 3;
+
+  const durationMin = event.durationMin || 0;
+  const socDrain = event.socDrain ?? Math.max(0, (event.startSoc || 0) - (event.minSoc || 0));
+
+  // Якщо подія тривала до 25 хв і розряд АКБ не перевищив 3% — це короткочасний стрибок/просідання напруги
+  if (durationMin <= maxSagMin && socDrain <= maxSagSoc) {
+    return {
+      type: OutageType.VOLTAGE_SAG,
+      label: '⚡ Стрибок напруги',
+      badgeColor: '#f59e0b',
+      badgeBg: 'rgba(245, 158, 11, 0.15)',
+      description: 'Короткочасне відсікання міської мережі захистом інвертора (напруга нижче 195 В). Запобігло аварійному блокуванню ліфтів.'
+    };
+  }
+
+  return {
+    type: OutageType.BLACKOUT,
+    label: '🔴 Відключення ДТЕК',
+    badgeColor: '#ef4444',
+    badgeBg: 'rgba(239, 68, 68, 0.15)',
+    description: 'Планове або аварійне відключення міської електромережі ДТЕК.'
+  };
+}
+
+/**
  * Аналіз багатоденного журналу відключень (фільтрація шуму <= 10 хв, підрахунок тривалості та агрегація).
  */
 export function analyzeMultiDayOutages(records, now, config = CONFIG) {
@@ -63,6 +101,12 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
           Math.round((curr.endTimestampSec - curr.startTimestampSec) / 60)
         );
         curr.socDrain = Math.max(0, curr.startSoc - curr.minSoc);
+        const classification = classifyOutageEvent(curr, config);
+        curr.eventType = classification.type;
+        curr.eventLabel = classification.label;
+        curr.eventBadgeColor = classification.badgeColor;
+        curr.eventBadgeBg = classification.badgeBg;
+        curr.eventDescription = classification.description;
 
         if (curr.dateStr === todayDateStr) {
           curr.dayLabel = "Сьогодні";
@@ -100,6 +144,23 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
     curr.isOngoing = true;
     curr.socDrain = Math.max(0, curr.startSoc - curr.minSoc);
 
+    const initialPhaseMin = config.THRESHOLDS?.VOLTAGE_SAG_INITIAL_PHASE_MINUTES ?? 15;
+    const isInitialPhase = curr.durationMin <= initialPhaseMin && curr.socDrain <= 1;
+    curr.isInitialPhase = isInitialPhase;
+    if (isInitialPhase) {
+      curr.eventType = OutageType.VOLTAGE_SAG;
+      curr.eventLabel = '⚡ Перевірка стабільності мережі';
+      curr.eventBadgeColor = '#f59e0b';
+      curr.eventBadgeBg = 'rgba(245, 158, 11, 0.15)';
+      curr.eventDescription = 'Можливе просідання напруги нижче 195 В або початок відключення.';
+    } else {
+      curr.eventType = OutageType.BLACKOUT;
+      curr.eventLabel = '🔴 Відключення ДТЕК';
+      curr.eventBadgeColor = '#ef4444';
+      curr.eventBadgeBg = 'rgba(239, 68, 68, 0.15)';
+      curr.eventDescription = 'Стійке відключення електромережі ДТЕК.';
+    }
+
     if (curr.durationMin > config.THRESHOLDS.MIN_OUTAGE_MINUTES) {
       events.push(curr);
       currentOutage = curr;
@@ -124,11 +185,30 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
   const totalM24 = totalMin24h % 60;
   const totalHours24hFormatted = totalH24 > 0 ? `${totalH24} год ${totalM24} хв` : `${totalM24} хв`;
 
+  const blackoutsIn24h = outagesIn24h.filter(e => e.eventType === OutageType.BLACKOUT);
+  const voltageSagsIn24h = outagesIn24h.filter(e => e.eventType === OutageType.VOLTAGE_SAG);
+
+  const blackoutsTotalMin = blackoutsIn24h.reduce((sum, e) => {
+    const startSec = Math.max(cutoff24hSec, e.startTimestampSec);
+    const endSec = e.endTimestampSec || (e.startTimestampSec + e.durationMin * 60);
+    return sum + Math.max(0, Math.round((endSec - startSec) / 60));
+  }, 0);
+
+  const voltageSagsTotalMin = voltageSagsIn24h.reduce((sum, e) => {
+    const startSec = Math.max(cutoff24hSec, e.startTimestampSec);
+    const endSec = e.endTimestampSec || (e.startTimestampSec + e.durationMin * 60);
+    return sum + Math.max(0, Math.round((endSec - startSec) / 60));
+  }, 0);
+
   return {
     validEvents: events,
     events,
     count: events.length,
     count24h: outagesIn24h.length,
+    blackoutCount24h: blackoutsIn24h.length,
+    blackoutMinutes24h: blackoutsTotalMin,
+    voltageSagCount24h: voltageSagsIn24h.length,
+    voltageSagMinutes24h: voltageSagsTotalMin,
     totalMinutes: totalMin24h,
     totalHoursFormatted: totalHours24hFormatted,
     totalHours24hFormatted,

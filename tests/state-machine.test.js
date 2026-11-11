@@ -63,6 +63,28 @@ describe('Domain: System State Machine (FSM / State Pattern)', () => {
     assert.ok(state.tipHtml.includes('Будинок перейшов на резервне живлення від батареї'));
   });
 
+  test('resolves to BLACKOUT_BATTERY with VOLTAGE_SAG checking state during initial phase (<= 15 min, minimal drain)', () => {
+    const data = {
+      is_online: true,
+      is_grid_on: false,
+      is_charging: false,
+      battery_soc: 100,
+      current_outage: {
+        start: '14:10',
+        durationMin: 8,
+        startSoc: 100,
+        socDrain: 0,
+        isInitialPhase: true
+      }
+    };
+    const state = resolveSystemState(data);
+    assert.equal(state.id, SystemStateId.BLACKOUT_BATTERY);
+    assert.equal(state.bannerIcon, '⚡');
+    assert.ok(state.bannerTitle.includes('Резервне живлення • Перевірка мережі (з 14:10)'));
+    assert.ok(state.bannerSubtitle.includes('Можливий стрибок напруги'));
+    assert.ok(state.tipHtml.includes('Захист інвертора'));
+  });
+
   test('resolves to BATTERY_DEPLETED when grid is off and battery reaches safety buffer (<= 10%)', () => {
     const data = {
       is_online: false,

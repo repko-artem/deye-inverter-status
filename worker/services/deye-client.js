@@ -18,13 +18,23 @@ export class DeyeClient {
     };
   }
 
-  async fetchJson(url, timeoutMs = 15000) {
+  async fetchJson(url, timeoutMs = 15000, options = {}) {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
     try {
+      const headers = {
+        ...this.getHeaders(),
+        ...(options.headers || {})
+      };
+      if (options.body) {
+        headers["Content-Type"] = "application/json";
+      }
+
       const res = await fetch(url, { 
-        headers: this.getHeaders(),
+        method: options.method || 'GET',
+        headers,
+        body: options.body ? JSON.stringify(options.body) : undefined,
         signal: controller ? controller.signal : undefined
       });
       const text = await res.text();
@@ -64,6 +74,14 @@ export class DeyeClient {
    */
   async getDailyBatteryHistory(year, month, day) {
     const url = `${this.apiBase}/maintain-s/history/batteryPower/${this.stationId}/stats/daily?year=${year}&month=${month}&day=${day}`;
+    return this.fetchJson(url);
+  }
+
+  /**
+   * Отримання списку інверторів станції з розширеною телеметрією (напруги фаз, струми, featureData)
+   */
+  async getDeviceList() {
+    const url = `${this.apiBase}/maintain-s/power/deye/device/${this.stationId}/device-list?deviceType=INVERTER`;
     return this.fetchJson(url);
   }
 }

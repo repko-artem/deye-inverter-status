@@ -53,8 +53,12 @@ export class TelemetryService {
     const pastDays = getPastDaysList(nowKyiv, this.config.CACHE.HISTORY_DAYS);
 
     try {
-      // 1. Паралельний запит: станція + сьогоднішня історія (історія не блокує живі дані інвертора)
+      // 1. Паралельний запит: станція + список пристроїв (featureData) + сьогоднішня історія
       const dispPromise = this.client.getStationDisplay();
+      const devListPromise = this.client.getDeviceList().catch(err => {
+        console.error("Помилка завантаження device-list (м'який фолбек):", err);
+        return null;
+      });
       const histTodayPromise = this.client.getDailyBatteryHistory(yToday, mToday, dToday).catch(err => {
         console.error("Помилка завантаження сьогоднішньої історії (м'який фолбек):", err);
         return null;
@@ -74,7 +78,18 @@ export class TelemetryService {
         }
       }
 
-      const [disp, histToday] = await Promise.all([dispPromise, histTodayPromise]);
+      const [disp, devList, histToday] = await Promise.all([dispPromise, devListPromise, histTodayPromise]);
+
+      // Розширені дані інвертора з device-list (featureData)
+      let featureData = null;
+      const invDevice = (devList && Array.isArray(devList.data) && devList.data.length > 0) ? devList.data[0] : null;
+      if (invDevice && invDevice.featureData) {
+        try {
+          featureData = typeof invDevice.featureData === 'string' ? JSON.parse(invDevice.featureData) : invDevice.featureData;
+        } catch (e) {
+          console.error("Помилка парсингу featureData:", e);
+        }
+      }
 
       for (const item of pastDayPromises) {
         const json = await item.promise;

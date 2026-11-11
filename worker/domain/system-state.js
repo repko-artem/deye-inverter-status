@@ -163,8 +163,19 @@ export function resolveSystemState(data, config = {}) {
     });
   }
 
-  // 4. Блекаут (робота будинку від батареї)
+  // 4. Блекаут або захисне відсікання міської мережі (робота будинку від батареї)
   if (!isGridOn) {
+    const isSagPhase = Boolean(currOutage?.isInitialPhase);
+    const title = isSagPhase
+      ? `Резервне живлення • Перевірка мережі ${outageStartStr}`.trim()
+      : `Відключення світла ${outageStartStr}`.trim();
+    const subtitle = isSagPhase
+      ? `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Можливий стрибок напруги або початок відключення`
+      : `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Старт із ${currOutage ? currOutage.startSoc : soc}%`;
+    const tipHtml = isSagPhase
+      ? `<strong>Захист інвертора:</strong> Будинок переведено на резервне живлення від батарей (ліфти, насоси та освітлення працюють стабільно). Найчастіша причина коротких перемикань — захисне відсікання міської мережі через просідання напруги нижче 195 В. Щойно напруга в місті стабілізується вище 205 В протягом 1 хв, система автоматично повернеться на міську мережу.`
+      : `<strong>Порада для мешканців:</strong> Будинок перейшов на резервне живлення від батареї (працюють насоси води, опалення, ліфти та чергове освітлення). Якщо є можливість піднятися сходами на свій поверх — це суттєво заощаджує заряд для безперебійного водопостачання та тепла для всього будинку!`;
+
     return new SystemState({
       id: SystemStateId.BLACKOUT_BATTERY,
       isOnline: true,
@@ -173,19 +184,19 @@ export function resolveSystemState(data, config = {}) {
       badgeBg: 'rgba(16, 185, 129, 0.15)',
       badgeBorder: 'rgba(16, 185, 129, 0.3)',
       dotColor: '#10b981',
-      bannerIcon: '🔴',
-      bannerBorderColor: 'var(--danger)',
-      bannerIconBg: 'rgba(239, 68, 68, 0.15)',
-      bannerIconColor: 'var(--danger)',
-      bannerTitle: `Відключення світла ${outageStartStr}`.trim(),
-      bannerSubtitle: `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Старт із ${currOutage ? currOutage.startSoc : soc}%`,
-      gaugeSubtext: '🔴 Розряд АКБ',
+      bannerIcon: isSagPhase ? '⚡' : '🔴',
+      bannerBorderColor: isSagPhase ? '#f59e0b' : 'var(--danger)',
+      bannerIconBg: isSagPhase ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+      bannerIconColor: isSagPhase ? '#f59e0b' : 'var(--danger)',
+      bannerTitle: title,
+      bannerSubtitle: subtitle,
+      gaugeSubtext: isSagPhase ? '⚡ Захист АКБ' : '🔴 Розряд АКБ',
       gaugeStrokeColor: soc > 50 ? '#3b82f6' : (soc > 25 ? '#f59e0b' : '#ef4444'),
-      tipIcon: '💡',
+      tipIcon: isSagPhase ? '⚡' : '💡',
       tipBg: 'rgba(245, 158, 11, 0.08)',
       tipBorder: 'rgba(245, 158, 11, 0.2)',
       tipColor: '#fef3c7',
-      tipHtml: `<strong>Порада для мешканців:</strong> Будинок перейшов на резервне живлення від батареї (працюють насоси води, опалення, ліфти та чергове освітлення). Якщо є можливість піднятися сходами на свій поверх — це суттєво заощаджує заряд для безперебійного водопостачання та тепла для всього будинку!`
+      tipHtml: tipHtml
     });
   }
 

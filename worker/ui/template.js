@@ -241,8 +241,13 @@ export function renderHTML(data) {
       <div style="font-size:0.9rem; font-weight:700; color:var(--text-main);">
         📊 Останні відключення (до 3)
       </div>
-      <div style="font-size:0.72rem; color:var(--text-muted);">
+      <div style="font-size:0.72rem; color:var(--text-muted); text-align:right;">
         Всього на АКБ (24 год): <strong>${journal.totalHours24hFormatted || journal.totalHoursFormatted || '0 хв'}</strong>
+        ${(journal.voltageSagCount24h && journal.voltageSagCount24h > 0) ? `
+          <div style="font-size:0.68rem; color:#f59e0b; margin-top:2px;">
+            ⚡ Захист від стрибків: ${journal.voltageSagCount24h} • 🔴 ДТЕК: ${journal.blackoutCount24h || 0}
+          </div>
+        ` : ''}
       </div>
     </div>
 
@@ -255,15 +260,22 @@ export function renderHTML(data) {
     ` : outages.map((outage, idx) => `
       <div class="card">
         <!-- Outage Title & Duration -->
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
           <div style="display:flex; align-items:center; gap:8px;">
-            <span style="width:9px; height:9px; border-radius:50%; background:${outage.isOngoing ? '#ef4444' : '#64748b'}; box-shadow:${outage.isOngoing ? '0 0 8px #ef4444' : 'none'};"></span>
+            <span style="width:9px; height:9px; border-radius:50%; background:${outage.isOngoing ? '#ef4444' : (outage.eventType === 'VOLTAGE_SAG' ? '#f59e0b' : '#64748b')}; box-shadow:${outage.isOngoing ? '0 0 8px #ef4444' : 'none'};"></span>
             <strong style="font-size:0.88rem; color:var(--text-main);">
               ${outage.isOngoing ? `Триває зараз: ${outage.dayLabel && outage.dayLabel !== 'Сьогодні' ? `<span style="color:#94a3b8; font-weight:500;">${outage.dayLabel},</span> ` : ''}з ${outage.start}` : `Відключення: ${outage.dayLabel ? `<span style="color:#94a3b8; font-weight:500;">${outage.dayLabel},</span> ` : ''}${outage.start} — ${outage.end}`}
             </strong>
           </div>
-          <div style="font-size:0.72rem; color:#60a5fa; font-weight:700; background:rgba(59,130,246,0.12); padding:3px 8px; border-radius:8px;">
-            ⏳ ${outage.durStr}
+          <div style="display:flex; align-items:center; gap:6px;">
+            ${outage.eventLabel ? `
+              <div style="font-size:0.68rem; color:${outage.eventBadgeColor || '#f59e0b'}; font-weight:600; background:${outage.eventBadgeBg || 'rgba(245,158,11,0.12)'}; padding:2px 7px; border-radius:6px;">
+                ${outage.eventLabel}
+              </div>
+            ` : ''}
+            <div style="font-size:0.72rem; color:#60a5fa; font-weight:700; background:rgba(59,130,246,0.12); padding:3px 8px; border-radius:8px;">
+              ⏳ ${outage.durStr}
+            </div>
           </div>
         </div>
 

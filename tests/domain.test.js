@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { CONFIG, getKyivOffsetSec } from '../worker/config.js';
 import { VERSION } from '../worker/version.js';
 import { isOutageRecord, calculateDischargeRate, calculate24hDischarge, simulateTimelineAutonomy } from '../worker/domain/autonomy.js';
-import { calculateOutageStatistics } from '../worker/domain/outages.js';
+import { calculateOutageStatistics, classifyOutageEvent, OutageType } from '../worker/domain/outages.js';
 import { TelemetryCache } from '../worker/services/cache.js';
 import { DeyeClient } from '../worker/services/deye-client.js';
 
@@ -104,6 +104,25 @@ describe('Domain: Autonomy & Outage Detection (DRY / SRP)', () => {
     assert.ok(sim.hours > 17.5 && sim.hours < 18.5, `Expected ~18h, got ${sim.hours}`);
     assert.equal(Math.round(sim.hours), 18);
     assert.ok(sim.endDate instanceof Date);
+  });
+
+  test('classifyOutageEvent categorizes short/low-drain events as VOLTAGE_SAG and sustained as BLACKOUT', () => {
+    // Short dip (15 min, 1% drain)
+    const sagEvent = { durationMin: 15, startSoc: 100, minSoc: 99, socDrain: 1 };
+    const sagClass = classifyOutageEvent(sagEvent, CONFIG);
+    assert.equal(sagClass.type, OutageType.VOLTAGE_SAG);
+    assert.ok(sagClass.label.includes('Стрибок напруги'));
+
+    // Sustained outage (90 min, 15% drain)
+    const blackoutEvent = { durationMin: 90, startSoc: 100, minSoc: 85, socDrain: 15 };
+    const blackoutClass = classifyOutageEvent(blackoutEvent, CONFIG);
+    assert.equal(blackoutClass.type, OutageType.BLACKOUT);
+    assert.ok(blackoutClass.label.includes('Відключення ДТЕК'));
+
+    // Event with high drain within 20 min (e.g. 5% drain > 3% threshold)
+    const heavyShortEvent = { durationMin: 20, startSoc: 100, minSoc: 95, socDrain: 5 };
+    const heavyClass = classifyOutageEvent(heavyShortEvent, CONFIG);
+    assert.equal(heavyClass.type, OutageType.BLACKOUT);
   });
 });
 
