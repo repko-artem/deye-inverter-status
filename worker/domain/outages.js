@@ -187,6 +187,8 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
 
   const blackoutsIn24h = outagesIn24h.filter(e => e.eventType === OutageType.BLACKOUT);
   const voltageSagsIn24h = outagesIn24h.filter(e => e.eventType === OutageType.VOLTAGE_SAG);
+  const allBlackouts = events.filter(e => e.eventType === OutageType.BLACKOUT);
+  const allVoltageSags = events.filter(e => e.eventType === OutageType.VOLTAGE_SAG);
 
   const blackoutsTotalMin = blackoutsIn24h.reduce((sum, e) => {
     const startSec = Math.max(cutoff24hSec, e.startTimestampSec);
@@ -207,8 +209,10 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
     count24h: outagesIn24h.length,
     blackoutCount24h: blackoutsIn24h.length,
     blackoutMinutes24h: blackoutsTotalMin,
+    blackoutCountTotal: allBlackouts.length,
     voltageSagCount24h: voltageSagsIn24h.length,
     voltageSagMinutes24h: voltageSagsTotalMin,
+    voltageSagCountTotal: allVoltageSags.length,
     totalMinutes: totalMin24h,
     totalHoursFormatted: totalHours24hFormatted,
     totalHours24hFormatted,

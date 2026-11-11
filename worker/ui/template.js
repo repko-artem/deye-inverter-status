@@ -237,17 +237,43 @@ export function renderHTML(data) {
     </div>
 
     <!-- OUTAGES STATS & CHARTS SECTION -->
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; padding:0 2px;">
-      <div style="font-size:0.9rem; font-weight:700; color:var(--text-main);">
-        📊 Останні відключення (до 3)
+    <div style="margin-top:10px; margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; padding:0 2px;">
+        <div style="font-size:0.92rem; font-weight:700; color:var(--text-main);">
+          📊 Журнал подій живлення
+        </div>
+        <div style="font-size:0.72rem; color:var(--text-muted);">
+          На АКБ (24 год): <strong>${journal.totalHours24hFormatted || journal.totalHoursFormatted || '0 хв'}</strong>
+        </div>
       </div>
-      <div style="font-size:0.72rem; color:var(--text-muted); text-align:right;">
-        Всього на АКБ (24 год): <strong>${journal.totalHours24hFormatted || journal.totalHoursFormatted || '0 хв'}</strong>
-        ${(journal.voltageSagCount24h && journal.voltageSagCount24h > 0) ? `
-          <div style="font-size:0.68rem; color:#f59e0b; margin-top:2px;">
-            ⚡ Захист від стрибків: ${journal.voltageSagCount24h} • 🔴 ДТЕК: ${journal.blackoutCount24h || 0}
+
+      <!-- Лічильники: Блекаути vs Захист від напруги (ЗАВЖДИ ВИДИМІ) -->
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+        <div style="background:var(--bg-metric); border:1px solid rgba(239,68,68,0.25); border-radius:10px; padding:8px 10px;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="font-size:1rem;">🔴</span>
+            <strong style="font-size:0.83rem; color:var(--text-main);">Блекаути ДТЕК</strong>
           </div>
-        ` : ''}
+          <div style="font-size:1rem; font-weight:700; color:#f87171; margin-top:3px;">
+            ${journal.blackoutCount24h || 0} <small style="font-size:0.68rem; font-weight:500; color:var(--text-muted);">(за 24 год)</small>
+          </div>
+          <div style="font-size:0.65rem; color:var(--text-muted); margin-top:2px;">
+            Всього за тиждень: <strong>${journal.blackoutCountTotal || 0}</strong>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-metric); border:1px solid rgba(245,158,11,0.25); border-radius:10px; padding:8px 10px;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="font-size:1rem;">⚡</span>
+            <strong style="font-size:0.83rem; color:var(--text-main);">Захист від напруги</strong>
+          </div>
+          <div style="font-size:1rem; font-weight:700; color:#f59e0b; margin-top:3px;">
+            ${journal.voltageSagCount24h || 0} <small style="font-size:0.68rem; font-weight:500; color:var(--text-muted);">(за 24 год)</small>
+          </div>
+          <div style="font-size:0.65rem; color:var(--text-muted); margin-top:2px;">
+            Всього за тиждень: <strong>${journal.voltageSagCountTotal || 0}</strong> спрацювань
+          </div>
+        </div>
       </div>
     </div>
 
