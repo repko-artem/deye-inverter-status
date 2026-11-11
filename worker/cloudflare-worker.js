@@ -12,6 +12,7 @@ import { calculateAutonomy, isOutageRecord, calculateDischargeRate, calculate24h
 import { analyzeMultiDayOutages, calculateOutageStatistics } from './domain/outages.js';
 import { buildOutageChart } from './ui/chart.js';
 import { resolveSystemState, SystemStateId, SystemState } from './domain/system-state.js';
+import { processTelegramNotifications } from './services/telegram-notifier.js';
 
 /**
  * Отримання свіжої телеметрії (з кешуванням на рівні інстансу)
@@ -52,6 +53,11 @@ export default {
     const data = await getCachedTelemetry(env);
     const cacheAgeSec = globalCache.getAgeSec();
 
+    // Перевірка та відправка сповіщень Telegram (асинхронно у фоні)
+    if (ctx && ctx.waitUntil) {
+      ctx.waitUntil(processTelegramNotifications(data, env));
+    }
+
     const securityHeaders = {
       "X-Content-Type-Options": "nosniff",
       "X-Frame-Options": "SAMEORIGIN",
@@ -89,6 +95,18 @@ export default {
     }
 
     return response;
+  },
+
+  /**
+   * Фоновий планувальник Cloudflare Cron Triggers (опитування кожні 2 хв)
+   */
+  async scheduled(controller, env, ctx) {
+    try {
+      const data = await getFreshTelemetry(env);
+      await processTelegramNotifications(data, env);
+    } catch (err) {
+      console.error('Scheduled notification error:', err);
+    }
   }
 };
 
@@ -108,5 +126,6 @@ export {
   calculate24hDischarge,
   resolveSystemState,
   SystemStateId,
-  SystemState
+  SystemState,
+  processTelegramNotifications
 };

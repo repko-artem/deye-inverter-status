@@ -2,5 +2,14 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "power",
   "main": "cloudflare-worker.js",
-  "compatibility_date": "2026-10-01"
+  "compatibility_date": "2026-10-01",
+  "kv_namespaces": [
+    {
+      "binding": "NOTIFY_KV",
+      "id": "8fd03f2cfd944d8ca7cde86f03eec4f4"
+    }
+  ],
+  "triggers": {
+    "crons": ["*/2 * * * *"]
+  }
 }
