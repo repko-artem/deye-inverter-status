@@ -5,17 +5,18 @@ import { calculateAutonomy, calculateDischargeRate, calculate24hDischarge } from
 import { analyzeMultiDayOutages, calculateOutageStatistics } from '../domain/outages.js';
 import { buildOutageChart } from '../ui/chart.js';
 import { resolveSystemState } from '../domain/system-state.js';
+import { nowUtcSec, formatKyivTime, formatKyivDate } from '../domain/time.js';
 
 /**
  * Генерує список дат за минулі дні для побудови багатоденного графіка
  */
-export function getPastDaysList(nowDate, daysCount = CONFIG.CACHE.HISTORY_DAYS) {
+export function getPastDaysList(currentSec = nowUtcSec(), daysCount = CONFIG.CACHE.HISTORY_DAYS) {
   const days = [];
+  const baseSec = (currentSec instanceof Date) ? Math.floor(currentSec.getTime() / 1000) : currentSec;
   for (let i = 1; i <= daysCount; i++) {
-    const d = new Date(nowDate.getTime() - i * 24 * 3600 * 1000);
-    const y = d.getFullYear();
-    const m = d.getMonth() + 1;
-    const day = d.getDate();
+    const daySec = baseSec - i * 86400;
+    const dateStr = formatKyivDate(daySec);
+    const [y, m, day] = dateStr.split('-').map(Number);
     const key = `${y}-${m}-${day}`;
     days.push({ y, m, day, key, offset: i });
   }
@@ -43,14 +44,12 @@ export class TelemetryService {
   }
 
   async getTelemetry() {
-    const nowKyiv = new Date(Date.now() + this.config.TIME.KYIV_OFFSET_SEC * 1000);
-    const nowStr = nowKyiv.toISOString().substring(11, 16);
-
-    const yToday = nowKyiv.getFullYear();
-    const mToday = nowKyiv.getMonth() + 1;
-    const dToday = nowKyiv.getDate();
-
-    const pastDays = getPastDaysList(nowKyiv, this.config.CACHE.HISTORY_DAYS);
+    const currentUtcSec = nowUtcSec();
+    const nowStr = formatKyivTime(currentUtcSec);
+    const todayDateStr = formatKyivDate(currentUtcSec);
+    const [yToday, mToday, dToday] = todayDateStr.split('-').map(Number);
+    const nowKyiv = new Date(currentUtcSec * 1000 + this.config.TIME.KYIV_OFFSET_SEC * 1000);
+    const pastDays = getPastDaysList(currentUtcSec, this.config.CACHE.HISTORY_DAYS);
 
     try {
       // 1. Паралельний запит: станція + список пристроїв (featureData) + сьогоднішня історія
@@ -134,10 +133,8 @@ export class TelemetryService {
 
       if (lastDeviceSec) {
         device_offline_minutes = Math.max(0, Math.round((nowSec - lastDeviceSec) / 60));
-        const lastSeenDate = new Date((lastDeviceSec + this.config.TIME.KYIV_OFFSET_SEC) * 1000);
-        const lastSeenTime = lastSeenDate.toISOString().substring(11, 16);
-        const lastSeenDateStr = lastSeenDate.toISOString().substring(0, 10);
-        const todayDateStr = nowKyiv.toISOString().substring(0, 10);
+        const lastSeenTime = formatKyivTime(lastDeviceSec);
+        const lastSeenDateStr = formatKyivDate(lastDeviceSec);
 
         device_last_seen = (lastSeenDateStr === todayDateStr) 
           ? `сьогодні о ${lastSeenTime}` 

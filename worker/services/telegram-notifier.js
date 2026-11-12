@@ -4,6 +4,8 @@
  * та сповіщення про відновлення міської електромережі.
  */
 
+import { nowUtcSec } from '../domain/time.js';
+
 export const NOTIFICATION_THRESHOLDS = Object.freeze([80, 60, 40, 20, 10]);
 
 /**
@@ -148,8 +150,8 @@ export async function processTelegramNotifications(data, env) {
     if (!state.isOutage) {
       state.isOutage = true;
       state.outageStart = data.current_outage?.start || data.updated_at || null;
-      const durationMin = Number(data.current_outage?.durationMin) || 0;
-      state.outageStartTimestampSec = Math.floor(Date.now() / 1000) - (durationMin * 60);
+      // Чистий UTC таймстемп початку відключення
+      state.outageStartTimestampSec = data.current_outage?.startTimestampSec || nowUtcSec();
       state.notifiedLevels = [];
       state.lastNotifiedThreshold = null;
       stateChanged = true;
@@ -177,7 +179,7 @@ export async function processTelegramNotifications(data, env) {
       // Якщо під час відключення було надіслано хоча б одне порогове сповіщення
       // (тобто це був реальний блекаут, а не 10-хвилинний мікро-стрибок без розряду)
       const hadDischargeAlerts = (state.notifiedLevels && state.notifiedLevels.length > 0);
-      const nowSec = Math.floor(Date.now() / 1000);
+      const nowSec = nowUtcSec();
 
       // Пріоритет 1: точна тривалість щойно завершеного відключення з журналу інвертора
       const lastCompletedEvent = data.journal?.validEvents?.[data.journal.validEvents.length - 1];
@@ -185,7 +187,7 @@ export async function processTelegramNotifications(data, env) {
         ? Number(lastCompletedEvent.durationMin)
         : 0;
 
-      // Пріоритет 2: розрахунок за мітками реального часу відстеження (UTC)
+      // Пріоритет 2: розрахунок за мітками реального часу відстеження (чистий UTC)
       if (!durMin && state.outageStartTimestampSec) {
         durMin = Math.max(1, Math.round((nowSec - state.outageStartTimestampSec) / 60));
       }

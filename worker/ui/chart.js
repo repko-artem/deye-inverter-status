@@ -1,18 +1,17 @@
 import { CONFIG } from '../config.js';
+import { formatKyivTime } from '../domain/time.js';
 
 /**
  * Побудова SVG графіка споживання та рівня заряду АКБ для події відключення.
  */
 export function buildOutageChart(e, records, eventNumber, config = CONFIG) {
-  const kyivOffsetSec = config.TIME.KYIV_OFFSET_SEC;
   const startIdx = Math.max(0, e.startIndex);
   const endIdx = Math.min(records.length - 1, e.endIndex ?? (records.length - 1));
   const rawSlice = records.slice(startIdx, endIdx + 1);
   if (!rawSlice || rawSlice.length === 0) return null;
 
   const points = rawSlice.map(r => {
-    const d = new Date((r.dateTime + kyivOffsetSec) * 1000);
-    const time = d.toISOString().substring(11, 16);
+    const time = formatKyivTime(r.dateTime);
     const useKw = Math.max(0, (r.usePower || 0) / 1000.0);
     const soc = Math.round(r.batterySoc || 75);
     return { time, useKw, soc };

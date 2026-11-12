@@ -1,5 +1,13 @@
 import { CONFIG } from '../config.js';
 import { isOutageRecord } from './autonomy.js';
+import { 
+  nowUtcSec, 
+  formatKyivTime, 
+  formatKyivDate, 
+  getKyivHour, 
+  formatKyivDayLabel, 
+  getKyivOffsetSec 
+} from './time.js';
 
 /**
  * Типи подій живлення
@@ -56,23 +64,22 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
     };
   }
 
-  const kyivOffsetSec = config.TIME.KYIV_OFFSET_SEC;
-  const nowKyiv = now || new Date(Date.now() + kyivOffsetSec * 1000);
-  const todayDateStr = nowKyiv.toISOString().substring(0, 10);
-  const yestDate = new Date(nowKyiv.getTime() - 24 * 3600 * 1000);
-  const yestDateStr = yestDate.toISOString().substring(0, 10);
-  const dayBeforeDate = new Date(nowKyiv.getTime() - 48 * 3600 * 1000);
-  const dayBeforeDateStr = dayBeforeDate.toISOString().substring(0, 10);
-  const cutoff24hSec = (nowKyiv.getTime() / 1000) - 24 * 3600;
+  const currentSec = (now instanceof Date) 
+    ? Math.floor(now.getTime() / 1000) 
+    : (typeof now === 'number' ? now : nowUtcSec());
+
+  const todayDateStr = formatKyivDate(currentSec);
+  const yestDateStr = formatKyivDate(currentSec - 86400);
+  const dayBeforeDateStr = formatKyivDate(currentSec - 172800);
+  const cutoff24hSec = currentSec - 86400;
 
   const events = [];
   let curr = null;
 
   records.forEach((r, idx) => {
     const isOutage = isOutageRecord(r, config);
-    const d = new Date((r.dateTime + kyivOffsetSec) * 1000);
-    const dateStr = d.toISOString().substring(0, 10);
-    const time = d.toISOString().substring(11, 16);
+    const dateStr = formatKyivDate(r.dateTime);
+    const time = formatKyivTime(r.dateTime);
 
     if (isOutage) {
       if (!curr) {
@@ -80,7 +87,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
           startIndex: idx, 
           dateStr,
           start: time, 
-          startTimestampSec: r.dateTime + kyivOffsetSec,
+          startTimestampSec: r.dateTime,
           startSoc: Math.round(r.batterySoc || 100), 
           minSoc: Math.round(r.batterySoc || 100), 
           pointsCount: 1 
@@ -94,8 +101,8 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
       if (curr) {
         curr.endIndex = idx - 1;
         curr.end = time;
-        curr.endTimestampSec = r.dateTime + kyivOffsetSec;
-        // Тривалість за реальними астрономічними мітками початку й кінця (захист від втрати 5-хв Wi-Fi точок)
+        curr.endTimestampSec = r.dateTime;
+        // Тривалість за реальними астрономічними мітками початку й кінця (UTC секунди)
         curr.durationMin = Math.max(
           curr.pointsCount * 5,
           Math.round((curr.endTimestampSec - curr.startTimestampSec) / 60)
@@ -108,18 +115,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
         curr.eventBadgeBg = classification.badgeBg;
         curr.eventDescription = classification.description;
 
-        if (curr.dateStr === todayDateStr) {
-          curr.dayLabel = "Сьогодні";
-        } else if (curr.dateStr === yestDateStr) {
-          curr.dayLabel = "Вчора";
-        } else if (curr.dateStr === dayBeforeDateStr) {
-          curr.dayLabel = "Позавчора";
-        } else if (curr.dateStr) {
-          const parts = curr.dateStr.split("-");
-          curr.dayLabel = `${parts[2]}.${parts[1]}`;
-        } else {
-          curr.dayLabel = "";
-        }
+        curr.dayLabel = formatKyivDayLabel(curr.dateStr, todayDateStr, yestDateStr, dayBeforeDateStr);
 
         // Не враховуємо мікро-відключення, що тривали до 10 хвилин включно
         if (curr.durationMin > config.THRESHOLDS.MIN_OUTAGE_MINUTES) {
@@ -134,13 +130,13 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
   if (curr) {
     curr.endIndex = records.length - 1;
     curr.end = "зараз";
-    curr.endTimestampSec = Math.floor(nowKyiv.getTime() / 1000);
-    // Тривалість за реальними астрономічними мітками часу
+    curr.endTimestampSec = currentSec;
+    // Тривалість за реальними астрономічними мітками часу (UTC)
     curr.durationMin = Math.max(
       curr.pointsCount * 5,
       Math.round((curr.endTimestampSec - curr.startTimestampSec) / 60)
     );
-    curr.dayLabel = (curr.dateStr === todayDateStr) ? "Сьогодні" : curr.dateStr;
+    curr.dayLabel = formatKyivDayLabel(curr.dateStr, todayDateStr, yestDateStr, dayBeforeDateStr);
     curr.isOngoing = true;
     curr.socDrain = Math.max(0, curr.startSoc - curr.minSoc);
 
@@ -224,13 +220,12 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
  * Розрахунок середнього денного та нічного навантаження будинку за історією відключень.
  */
 export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG) {
-  const kyivOffsetSec = config.TIME.KYIV_OFFSET_SEC;
   const { DEFAULT_ACTIVE_KW, DEFAULT_NIGHT_KW, NIGHT_HOUR_START, NIGHT_HOUR_END, HEATING_SEASON_START } = config.THRESHOLDS;
 
   let heatingCutoffSec = 0;
   if (HEATING_SEASON_START) {
     const heatingDate = new Date(`${HEATING_SEASON_START}T00:00:00Z`);
-    heatingCutoffSec = Math.floor(heatingDate.getTime() / 1000) - kyivOffsetSec;
+    heatingCutoffSec = Math.floor(heatingDate.getTime() / 1000) - getKyivOffsetSec(heatingDate);
   }
 
   const allOutagePoints = multiDayRecords.filter(r => isOutageRecord(r, config));
@@ -245,8 +240,7 @@ export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG)
   const nightOutageKws = [];
 
   for (const r of outagePoints) {
-    const d = new Date((r.dateTime + kyivOffsetSec) * 1000);
-    const hour = d.getUTCHours();
+    const hour = getKyivHour(r.dateTime);
     const kw = Math.max(0, (r.usePower || r.dischargePower || r.batteryPower || 0) / 1000.0);
     if (hour >= NIGHT_HOUR_START || hour < NIGHT_HOUR_END) {
       nightOutageKws.push(kw);
@@ -271,8 +265,7 @@ export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG)
       : multiDayRecords;
     const nightBaseKws = [];
     for (const r of (recordsForBase.length >= 24 ? recordsForBase : multiDayRecords)) {
-      const d = new Date((r.dateTime + kyivOffsetSec) * 1000);
-      const hour = d.getUTCHours();
+      const hour = getKyivHour(r.dateTime);
       const kw = (r.usePower || 0) / 1000.0;
       if (kw > 0.3 && (hour >= NIGHT_HOUR_START || hour < NIGHT_HOUR_END)) {
         nightBaseKws.push(kw);
