@@ -169,8 +169,7 @@ export class TelemetryService {
         const m = Math.round((hoursToFull - h) * 60);
         time_to_full_formatted = `${h} год ${m} хв`;
 
-        const fullDate = new Date(nowKyiv.getTime() + hoursToFull * 3600 * 1000);
-        time_to_full_est = fullDate.toISOString().substring(11, 16);
+        time_to_full_est = formatKyivTime(currentUtcSec + Math.round(hoursToFull * 3600));
       }
 
       // 6. Доменна статистика споживання (день / ніч)
@@ -187,8 +186,8 @@ export class TelemetryService {
         ? (charge_power_kw / this.config.BATTERY.NOMINAL_CAPACITY_KWH * 100).toFixed(1) 
         : "0";
 
-      // 8. Журнал та графіки відключень
-      const outageJournal = analyzeMultiDayOutages(multiDayRecords, nowKyiv, this.config);
+      // 8. Журнал та графіки відключень (передаємо чистий UTC час)
+      const outageJournal = analyzeMultiDayOutages(multiDayRecords, currentUtcSec, this.config);
       const validOutages = outageJournal.validEvents || [];
       // Показувати поточне відключення (навіть якщо розряд ще <= 1%), а для минулих відключень
       // показувати графіки лише якщо розряд батареї був більше 1% (> 1%).
