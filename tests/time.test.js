@@ -80,4 +80,20 @@ test('Clean Time Architecture: Core Invariants', async (t) => {
     assert.equal(ev.start, '21:25');
     assert.equal(ev.end, '01:45');
   });
+
+  await t.test('analyzeMultiDayOutages calculates accurate ongoing duration in pure UTC', () => {
+    const startSec = 1794466200; // 08:50 Kyiv (06:50 UTC)
+    const currentUtc = startSec + 34 * 60; // 34 minutes later (07:24 UTC)
+    const records = [
+      { dateTime: startSec, wirePower: 0, batteryPower: 4500, batterySoc: 100 },
+      { dateTime: startSec + 300, wirePower: 0, batteryPower: 4500, batterySoc: 99 },
+      { dateTime: startSec + 600, wirePower: 0, batteryPower: 4500, batterySoc: 98 }
+    ];
+
+    const result = analyzeMultiDayOutages(records, currentUtc);
+    assert.ok(result.currentOutage);
+    assert.equal(result.currentOutage.isOngoing, true);
+    assert.equal(result.currentOutage.durationMin, 34);
+    assert.equal(result.currentOutage.start, '08:50');
+  });
 });
