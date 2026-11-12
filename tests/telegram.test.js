@@ -199,6 +199,26 @@ test('Telegram Notification: processTelegramNotifications workflow', async (t) =
     assert.equal(sentMessages.length, 0); // No alert
     await processTelegramNotifications({ is_grid_on: true, battery_soc: 100 }, env);
     assert.equal(sentMessages.length, 0); // No restoration spam
+
+    // 7. Sustained outage (e.g. 40 min) with battery staying above first threshold (97% > 80%)
+    // -> Must NOT send restoration alert because no threshold alert was ever sent to the group
+    sentMessages.length = 0;
+    await processTelegramNotifications({
+      is_grid_on: false,
+      battery_soc: 97,
+      current_outage: { start: '08:50', durationMin: 40 }
+    }, env);
+    assert.equal(sentMessages.length, 0, 'No threshold message sent when SOC is 97% (above 80%)');
+
+    const res7 = await processTelegramNotifications({
+      is_grid_on: true,
+      battery_soc: 97,
+      use_power_kw: 5.0,
+      charge_power_kw: 6.0,
+      journal: { validEvents: [{ durationMin: 40 }] }
+    }, env);
+    assert.equal(sentMessages.length, 0, 'Must NOT send restoration message if no threshold alert was sent');
+    assert.equal(res7.state.isOutage, false);
   } finally {
     globalThis.fetch = originalFetch;
   }

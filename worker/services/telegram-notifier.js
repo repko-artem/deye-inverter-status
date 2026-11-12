@@ -176,9 +176,10 @@ export async function processTelegramNotifications(data, env) {
   // 2. Сценарій: Мережа відновлена (робота від міста)
   else {
     if (state.isOutage) {
-      // Якщо під час відключення було надіслано хоча б одне порогове сповіщення
-      // (тобто це був реальний блекаут, а не 10-хвилинний мікро-стрибок без розряду)
-      const hadDischargeAlerts = (state.notifiedLevels && state.notifiedLevels.length > 0);
+      // Сповіщення про відновлення мережі надсилається виключно тоді,
+      // коли під час цього відключення було надіслано хоча б одне порогове сповіщення з рівнем заряду
+      // (тобто мешканці були попереджені про аварійне використання батареї: state.notifiedLevels.length > 0)
+      const hadDischargeAlerts = Boolean(state.notifiedLevels && state.notifiedLevels.length > 0);
       const nowSec = nowUtcSec();
 
       // Пріоритет 1: точна тривалість щойно завершеного відключення з журналу інвертора
@@ -192,7 +193,7 @@ export async function processTelegramNotifications(data, env) {
         durMin = Math.max(1, Math.round((nowSec - state.outageStartTimestampSec) / 60));
       }
 
-      if (hadDischargeAlerts || durMin >= 20) {
+      if (hadDischargeAlerts) {
         const msg = formatRestorationMessage(data, durMin);
         await sendTelegramMessage(botToken, chatId, msg);
       }
