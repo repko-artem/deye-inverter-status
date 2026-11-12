@@ -174,16 +174,22 @@ test('Telegram Notification: processTelegramNotifications workflow', async (t) =
     assert.ok(sentMessages[0].text.includes('59%'));
     assert.deepEqual(res5.state.notifiedLevels, [80, 60]);
 
-    // 6. Grid restores! Since we had notifications, send restoration alert!
+    // 6. Grid restores! Since we had notifications, send restoration alert with exact journal duration!
     sentMessages.length = 0;
     const res6 = await processTelegramNotifications({
       is_grid_on: true,
       battery_soc: 59,
       use_power_kw: 5.0,
-      charge_power_kw: 10.0
+      charge_power_kw: 10.0,
+      journal: {
+        validEvents: [
+          { durationMin: 260 }
+        ]
+      }
     }, env);
     assert.equal(sentMessages.length, 1);
     assert.ok(sentMessages[0].text.includes('Міську електромережу відновлено'));
+    assert.ok(sentMessages[0].text.includes('4 год 20 хв'));
     assert.equal(res6.state.isOutage, false);
     assert.deepEqual(res6.state.notifiedLevels, []);
 

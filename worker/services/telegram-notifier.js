@@ -148,13 +148,14 @@ export async function processTelegramNotifications(data, env) {
     if (!state.isOutage) {
       state.isOutage = true;
       state.outageStart = data.current_outage?.start || data.updated_at || null;
-      state.outageStartTimestampSec = data.current_outage?.startTimestampSec || Math.floor(Date.now() / 1000);
+      const durationMin = Number(data.current_outage?.durationMin) || 0;
+      state.outageStartTimestampSec = Math.floor(Date.now() / 1000) - (durationMin * 60);
       state.notifiedLevels = [];
       state.lastNotifiedThreshold = null;
       stateChanged = true;
     }
 
-    // Шукаємо пороги розряду (від 90 до 10)
+    // Шукаємо пороги розряду (від 80 до 10)
     for (const threshold of NOTIFICATION_THRESHOLDS) {
       if (currentSoc <= threshold && !state.notifiedLevels.includes(threshold)) {
         // Відправляємо сповіщення про цей поріг
@@ -177,9 +178,17 @@ export async function processTelegramNotifications(data, env) {
       // (тобто це був реальний блекаут, а не 10-хвилинний мікро-стрибок без розряду)
       const hadDischargeAlerts = (state.notifiedLevels && state.notifiedLevels.length > 0);
       const nowSec = Math.floor(Date.now() / 1000);
-      const durMin = state.outageStartTimestampSec
-        ? Math.max(1, Math.round((nowSec - state.outageStartTimestampSec) / 60))
-        : (data.journal?.validEvents?.[data.journal.validEvents.length - 1]?.durationMin || 0);
+
+      // Пріоритет 1: точна тривалість щойно завершеного відключення з журналу інвертора
+      const lastCompletedEvent = data.journal?.validEvents?.[data.journal.validEvents.length - 1];
+      let durMin = (lastCompletedEvent && Number(lastCompletedEvent.durationMin) > 0)
+        ? Number(lastCompletedEvent.durationMin)
+        : 0;
+
+      // Пріоритет 2: розрахунок за мітками реального часу відстеження (UTC)
+      if (!durMin && state.outageStartTimestampSec) {
+        durMin = Math.max(1, Math.round((nowSec - state.outageStartTimestampSec) / 60));
+      }
 
       if (hadDischargeAlerts || durMin >= 20) {
         const msg = formatRestorationMessage(data, durMin);
