@@ -96,4 +96,40 @@ test('Clean Time Architecture: Core Invariants', async (t) => {
     assert.equal(result.currentOutage.durationMin, 34);
     assert.equal(result.currentOutage.start, '08:50');
   });
+
+  await t.test('ongoing outage crossing midnight calculates true physical duration without day-boundary jump', () => {
+    // 2026-11-11 23:45 Kyiv = 21:45 UTC
+    const startSec = Math.floor(new Date('2026-11-11T21:45:00Z').getTime() / 1000);
+    // 2026-11-12 00:30 Kyiv = 22:30 UTC (45 minutes later, next calendar day in Kyiv)
+    const currentUtc = startSec + 45 * 60;
+
+    const records = [
+      { dateTime: startSec, wirePower: 0, batteryPower: 4000, batterySoc: 100 },
+      { dateTime: startSec + 300, wirePower: 0, batteryPower: 4000, batterySoc: 99 },
+      { dateTime: startSec + 600, wirePower: 0, batteryPower: 4000, batterySoc: 98 }
+    ];
+
+    const result = analyzeMultiDayOutages(records, currentUtc);
+    assert.ok(result.currentOutage);
+    assert.equal(result.currentOutage.isOngoing, true);
+    assert.equal(result.currentOutage.durationMin, 45, 'Must be exactly 45 min across midnight, never negative or +24h');
+    assert.equal(result.currentOutage.start, '23:45');
+    assert.equal(result.currentOutage.end, 'зараз');
+  });
+
+  await t.test('outage across autumn DST clock rollback (3:00 -> 3:00) tracks exact physical duration in UTC', () => {
+    // Last Sunday of October (e.g. 2026-10-25 00:30 UTC -> 03:30 Kyiv summer UTC+3)
+    // 3 hours later = 03:30 UTC (which is 05:30 Kyiv winter UTC+2)
+    const startSec = Math.floor(new Date('2026-10-25T00:30:00Z').getTime() / 1000);
+    const endSec = startSec + 180 * 60; // exactly 180 min physical duration
+
+    const records = [
+      { dateTime: startSec, wirePower: 0, batteryPower: 4000, batterySoc: 100 },
+      { dateTime: endSec, wirePower: 5000, batteryPower: -1000, batterySoc: 65 }
+    ];
+
+    const result = analyzeMultiDayOutages(records, endSec + 60);
+    assert.equal(result.validEvents.length, 1);
+    assert.equal(result.validEvents[0].durationMin, 180, 'Physical duration must be 180 minutes regardless of DST clock rollback');
+  });
 });

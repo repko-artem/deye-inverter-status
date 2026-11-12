@@ -553,4 +553,79 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  test('calculates ongoing outage duration in getFreshTelemetry with pure UTC without 2-hour offset skew', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const startOutageSec = nowSec - 30 * 60; // outage started exactly 30 min ago
+      const nowKyiv = new Date(Date.now() + 7200 * 1000);
+      const todayQuery = `year=${nowKyiv.getFullYear()}&month=${nowKyiv.getMonth() + 1}&day=${nowKyiv.getDate()}`;
+
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 98,
+              batteryBv: 641.0,
+              gridRelayStatus: 'off',
+              wirePower: 0,
+              batteryPower: 4500,
+              batteryStatus: 'DISCHARGE',
+              usePower: 4500,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: nowSec
+            })
+          };
+        }
+        if (urlStr.includes('/maintain-s/history/batteryPower/')) {
+          if (!urlStr.includes(todayQuery)) {
+            return {
+              ok: true,
+              status: 200,
+              text: async () => JSON.stringify({ records: [] })
+            };
+          }
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              records: [
+                { dateTime: startOutageSec - 300, wirePower: 5000, batteryPower: 0, usePower: 3000, batterySoc: 100 },
+                { dateTime: startOutageSec, wirePower: 0, batteryPower: 4500, usePower: 4500, batterySoc: 100 },
+                { dateTime: startOutageSec + 300, wirePower: 0, batteryPower: 4500, usePower: 4500, batterySoc: 99 },
+                { dateTime: startOutageSec + 600, wirePower: 0, batteryPower: 4500, usePower: 4500, batterySoc: 98 }
+              ]
+            })
+          };
+        }
+        return { ok: false, status: 404, text: async () => "{}" };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com'
+      };
+
+      const data = await getFreshTelemetry(env);
+      assert.ok(data.current_outage, 'current_outage must be populated');
+      assert.equal(data.current_outage.isOngoing, true);
+      // Invariant: Duration must be ~30 min, NEVER ~150 min (+2h)
+      assert.ok(
+        data.current_outage.durationMin >= 28 && data.current_outage.durationMin <= 32,
+        `Expected ~30 min, got ${data.current_outage.durationMin} min`
+      );
+
+      const html = renderHTML(data);
+      assert.ok(html.includes(`Триває ${data.current_outage.durationMin} хв`));
+      assert.equal(html.includes('Триває 2 год'), false, 'HTML must not have phantom 2 hours added to ongoing blackout');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
