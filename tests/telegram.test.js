@@ -219,6 +219,101 @@ test('Telegram Notification: processTelegramNotifications workflow', async (t) =
     }, env);
     assert.equal(sentMessages.length, 0, 'Must NOT send restoration message if no threshold alert was sent');
     assert.equal(res7.state.isOutage, false);
+
+    // 8. Outage starts at intermediate SOC (e.g. 63% - today's real bug scenario!)
+    // -> MUST NOT send threshold 80% message with "63% щойно"!
+    sentMessages.length = 0;
+    const res8a = await processTelegramNotifications({
+      is_grid_on: false,
+      battery_soc: 63,
+      current_outage: { start: '20:30', durationMin: 1 }
+    }, env);
+    assert.equal(sentMessages.length, 0, 'Must be silent on start at 63% (do NOT catch up 80% threshold)');
+    assert.deepEqual(res8a.state.notifiedLevels, [80]);
+    assert.deepEqual(res8a.state.sentAlerts, []);
+
+    // Next tick: battery drops to 62% -> still above 60%, silent!
+    sentMessages.length = 0;
+    await processTelegramNotifications({ is_grid_on: false, battery_soc: 62 }, env);
+    assert.equal(sentMessages.length, 0);
+
+    // Next tick: battery reaches 60% -> fires 60% threshold!
+    sentMessages.length = 0;
+    const res8b = await processTelegramNotifications({ is_grid_on: false, battery_soc: 60 }, env);
+    assert.equal(sentMessages.length, 1);
+    assert.ok(sentMessages[0].text.includes('60%'));
+    assert.deepEqual(res8b.state.notifiedLevels, [80, 60]);
+    assert.deepEqual(res8b.state.sentAlerts, [60]);
+
+    // Grid restores -> restoration message sent because 60% was alerted!
+    sentMessages.length = 0;
+    const res8c = await processTelegramNotifications({
+      is_grid_on: true,
+      battery_soc: 60,
+      journal: { validEvents: [{ durationMin: 50 }] }
+    }, env);
+    assert.equal(sentMessages.length, 1);
+    assert.ok(sentMessages[0].text.includes('Міську електромережу відновлено'));
+    assert.equal(res8c.state.isOutage, false);
+
+    // 9. Sudden multi-threshold jump (e.g. 65% -> 38%, skipping 60% and landing in 40%)
+    // -> Must prioritize the most critical reached threshold (40% with elevator warning!)
+    sentMessages.length = 0;
+    const res9a = await processTelegramNotifications({
+      is_grid_on: false,
+      battery_soc: 65,
+      current_outage: { start: '21:00', durationMin: 10 }
+    }, env);
+    assert.equal(sentMessages.length, 0); // 80 pre-filtered, 65 > 60
+
+    sentMessages.length = 0;
+    const res9b = await processTelegramNotifications({
+      is_grid_on: false,
+      battery_soc: 38
+    }, env);
+    assert.equal(sentMessages.length, 1);
+    // Crucial: Must deliver the elevator warning from the 40% threshold!
+    assert.ok(sentMessages[0].text.includes('Ліфти будуть відключені'));
+    assert.deepEqual(res9b.state.notifiedLevels, [80, 60, 40]);
+    assert.deepEqual(res9b.state.sentAlerts, [40]);
+
+    // Next tick at 37%: no duplicate message!
+    sentMessages.length = 0;
+    await processTelegramNotifications({ is_grid_on: false, battery_soc: 37 }, env);
+    assert.equal(sentMessages.length, 0);
+
+    // 10. Battery bounce / chemical relaxation (60% -> 61% -> 59%)
+    // -> Must NOT re-trigger 60% when battery recovers slightly under light load
+    sentMessages.length = 0;
+    // Restore grid first
+    await processTelegramNotifications({ is_grid_on: true, battery_soc: 100 }, env);
+    // Start outage
+    await processTelegramNotifications({ is_grid_on: false, battery_soc: 85 }, env);
+    // Drops to 60%
+    sentMessages.length = 0;
+    await processTelegramNotifications({ is_grid_on: false, battery_soc: 60 }, env);
+    assert.equal(sentMessages.length, 1);
+    // Bounces to 61%
+    sentMessages.length = 0;
+    await processTelegramNotifications({ is_grid_on: false, battery_soc: 61 }, env);
+    assert.equal(sentMessages.length, 0);
+    // Drops back to 59%
+    sentMessages.length = 0;
+    await processTelegramNotifications({ is_grid_on: false, battery_soc: 59 }, env);
+    assert.equal(sentMessages.length, 0, 'No duplicate 60% notification on bounce');
+
+    // 11. Outage starts at critically low SOC (e.g. 10% cutoff buffer)
+    // -> Must immediately send the 10% shutdown alert!
+    await processTelegramNotifications({ is_grid_on: true, battery_soc: 100 }, env);
+    sentMessages.length = 0;
+    const res11 = await processTelegramNotifications({
+      is_grid_on: false,
+      battery_soc: 10,
+      current_outage: { start: '22:00', durationMin: 1 }
+    }, env);
+    assert.equal(sentMessages.length, 1);
+    assert.ok(sentMessages[0].text.includes('Досягнуто захисний поріг інвертора (10%)'));
+    assert.deepEqual(res11.state.sentAlerts, [10]);
   } finally {
     globalThis.fetch = originalFetch;
   }

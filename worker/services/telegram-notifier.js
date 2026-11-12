@@ -140,6 +140,9 @@ export async function processTelegramNotifications(data, env) {
   if (!Array.isArray(state.notifiedLevels)) {
     state.notifiedLevels = [];
   }
+  if (!Array.isArray(state.sentAlerts)) {
+    state.sentAlerts = [];
+  }
 
   const isGridOn = Boolean(data.is_grid_on);
   const currentSoc = Number.isFinite(data.battery_soc) ? data.battery_soc : 100;
@@ -152,24 +155,39 @@ export async function processTelegramNotifications(data, env) {
       state.outageStart = data.current_outage?.start || data.updated_at || null;
       // Чистий UTC таймстемп початку відключення
       state.outageStartTimestampSec = data.current_outage?.startTimestampSec || nowUtcSec();
-      state.notifiedLevels = [];
+      state.outageStartSoc = currentSoc;
+
+      // Усі пороги, які СТРОГО ВИЩІ за стартовий заряд батареї на момент початку відключення,
+      // позначаємо як уже пройдені (щоб бот не наздоганяв старі неактуальні пороги при старті з неповної батареї)
+      state.notifiedLevels = NOTIFICATION_THRESHOLDS.filter(t => t > currentSoc);
+      state.sentAlerts = [];
       state.lastNotifiedThreshold = null;
       stateChanged = true;
     }
 
     // Шукаємо пороги розряду (від 80 до 10)
-    for (const threshold of NOTIFICATION_THRESHOLDS) {
-      if (currentSoc <= threshold && !state.notifiedLevels.includes(threshold)) {
-        // Відправляємо сповіщення про цей поріг
-        const msg = formatThresholdMessage(threshold, data);
-        const sent = await sendTelegramMessage(botToken, chatId, msg);
-        if (sent) {
-          state.notifiedLevels.push(threshold);
-          state.lastNotifiedThreshold = threshold;
-          stateChanged = true;
-          // Відправляємо по одному повідомленню за раз (найвищий несповіщений поріг)
-          break;
+    // Якщо заряд перескочив одразу кілька порогів (наприклад, з 65% до 38%),
+    // ми повинні знайти найактуальніший (найнижчий) досягнутий поріг (наприклад, 40% з попередженням про ліфти)
+    // і позначити всі вищі пропущені пороги (60%) як пройдені, щоб не слати застарілі сповіщення.
+    const reachedThresholds = NOTIFICATION_THRESHOLDS.filter(
+      t => currentSoc <= t && !state.notifiedLevels.includes(t)
+    );
+
+    if (reachedThresholds.length > 0) {
+      // Найактуальніший поріг — це найменший серед щойно досягнутих
+      const targetThreshold = reachedThresholds[reachedThresholds.length - 1];
+
+      const msg = formatThresholdMessage(targetThreshold, data);
+      const sent = await sendTelegramMessage(botToken, chatId, msg);
+      if (sent) {
+        for (const t of reachedThresholds) {
+          if (!state.notifiedLevels.includes(t)) {
+            state.notifiedLevels.push(t);
+          }
         }
+        state.sentAlerts.push(targetThreshold);
+        state.lastNotifiedThreshold = targetThreshold;
+        stateChanged = true;
       }
     }
   } 
@@ -178,8 +196,8 @@ export async function processTelegramNotifications(data, env) {
     if (state.isOutage) {
       // Сповіщення про відновлення мережі надсилається виключно тоді,
       // коли під час цього відключення було надіслано хоча б одне порогове сповіщення з рівнем заряду
-      // (тобто мешканці були попереджені про аварійне використання батареї: state.notifiedLevels.length > 0)
-      const hadDischargeAlerts = Boolean(state.notifiedLevels && state.notifiedLevels.length > 0);
+      // (тобто мешканці були попереджені про аварійне використання батареї: state.sentAlerts.length > 0)
+      const hadDischargeAlerts = Boolean(state.sentAlerts && state.sentAlerts.length > 0);
       const nowSec = nowUtcSec();
 
       // Пріоритет 1: точна тривалість щойно завершеного відключення з журналу інвертора
@@ -201,7 +219,9 @@ export async function processTelegramNotifications(data, env) {
       state.isOutage = false;
       state.outageStart = null;
       state.outageStartTimestampSec = null;
+      state.outageStartSoc = null;
       state.notifiedLevels = [];
+      state.sentAlerts = [];
       state.lastNotifiedThreshold = null;
       state.lastOutageDurMin = durMin;
       stateChanged = true;
