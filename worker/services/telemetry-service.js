@@ -8,6 +8,24 @@ import { resolveSystemState } from '../domain/system-state.js';
 import { nowUtcSec, formatKyivTime, formatKyivDate } from '../domain/time.js';
 
 /**
+ * Скорочує запис добової історії до полів, необхідних доменній логіці та графікам.
+ */
+export function compactHistoryRecord(r) {
+  if (!r || typeof r !== 'object') return r;
+  const out = {
+    dateTime: r.dateTime,
+    wirePower: r.wirePower ?? 0,
+    batteryPower: r.batteryPower ?? 0,
+    usePower: r.usePower ?? 0,
+    batterySoc: r.batterySoc ?? 100
+  };
+  if (r.dischargePower !== undefined) {
+    out.dischargePower = r.dischargePower;
+  }
+  return out;
+}
+
+/**
  * Генерує список дат за минулі дні для побудови багатоденного графіка
  */
 export function getPastDaysList(currentSec = nowUtcSec(), daysCount = CONFIG.CACHE.HISTORY_DAYS) {
@@ -52,50 +70,77 @@ export class TelemetryService {
     const pastDays = getPastDaysList(currentUtcSec, this.config.CACHE.HISTORY_DAYS);
 
     try {
-      // 1. Паралельний запит: станція + список пристроїв (featureData) + сьогоднішня історія
+      const kv = this.env && this.env.NOTIFY_KV;
+
+      // 1. Паралельний запит: поточна станція + сьогоднішня історія (2 з'єднання)
       const dispPromise = this.client.getStationDisplay();
-      const devListPromise = this.client.getDeviceList().catch(err => {
-        console.error("Помилка завантаження device-list (м'який фолбек):", err);
-        return null;
-      });
       const histTodayPromise = this.client.getDailyBatteryHistory(yToday, mToday, dToday).catch(err => {
         console.error("Помилка завантаження сьогоднішньої історії (м'який фолбек):", err);
         return null;
       });
 
-      // 2. Довантаження відсутніх днів з кешу
-      const pastDayPromises = [];
-      for (const pd of pastDays) {
-        if (!this.cache.getDayRecords(pd.key)) {
-          pastDayPromises.push({
-            pd,
-            promise: this.client.getDailyBatteryHistory(pd.y, pd.m, pd.day).catch(err => {
-              console.error(`Error fetching history for ${pd.key}:`, err);
-              return null;
-            })
-          });
-        }
-      }
-
-      const [disp, devList, histToday] = await Promise.all([dispPromise, devListPromise, histTodayPromise]);
-
-      // Розширені дані інвертора з device-list (featureData)
-      let featureData = null;
-      const invDevice = (devList && Array.isArray(devList.data) && devList.data.length > 0) ? devList.data[0] : null;
-      if (invDevice && invDevice.featureData) {
+      // 2. Перевірка кешу минулих днів і довантаження з Cloudflare KV за потреби
+      let missingPastDays = pastDays.filter(pd => !this.cache.getDayRecords(pd.key));
+      if (missingPastDays.length > 0 && kv) {
         try {
-          featureData = typeof invDevice.featureData === 'string' ? JSON.parse(invDevice.featureData) : invDevice.featureData;
-        } catch (e) {
-          console.error("Помилка парсингу featureData:", e);
+          const kvHistory = await kv.get('history_past_days', { type: 'json' });
+          if (kvHistory && typeof kvHistory === 'object') {
+            for (const pd of missingPastDays) {
+              if (Array.isArray(kvHistory[pd.key]) && kvHistory[pd.key].length > 0) {
+                this.cache.setDayRecords(pd.key, kvHistory[pd.key]);
+              }
+            }
+            missingPastDays = pastDays.filter(pd => !this.cache.getDayRecords(pd.key));
+          }
+        } catch (err) {
+          console.error('Failed to read history_past_days from KV:', err);
         }
       }
 
-      for (const item of pastDayPromises) {
-        const json = await item.promise;
-        if (json && json.records && json.records.length > 0) {
-          this.cache.setDayRecords(item.pd.key, json.records);
+      // 3. Довантаження відсутніх днів батчами з обмеженням паралельності (<= 3 + 2 основних <= 6 ліміту CF)
+      const concurrency = this.config.CACHE?.HISTORY_CONCURRENCY || 3;
+      const daysFetched = [];
+      let fetchedAnyPastDay = false;
+
+      for (let i = 0; i < missingPastDays.length; i += concurrency) {
+        const batch = missingPastDays.slice(i, i + concurrency);
+        const batchResults = await Promise.all(
+          batch.map(async (pd) => {
+            try {
+              const json = await this.client.getDailyBatteryHistory(pd.y, pd.m, pd.day);
+              return { pd, json };
+            } catch (err) {
+              console.error(`Error fetching history for ${pd.key}:`, err);
+              return { pd, json: null };
+            }
+          })
+        );
+        for (const { pd, json } of batchResults) {
+          daysFetched.push(pd.key);
+          if (json && Array.isArray(json.records) && json.records.length > 0) {
+            const compacted = json.records.map(compactHistoryRecord);
+            this.cache.setDayRecords(pd.key, compacted);
+            fetchedAnyPastDay = true;
+          }
         }
       }
+
+      if (fetchedAnyPastDay && kv) {
+        try {
+          const kvPayload = {};
+          for (const pd of pastDays) {
+            const recs = this.cache.getDayRecords(pd.key);
+            if (Array.isArray(recs) && recs.length > 0) {
+              kvPayload[pd.key] = recs;
+            }
+          }
+          await kv.put('history_past_days', JSON.stringify(kvPayload));
+        } catch (err) {
+          console.error('Failed to save history_past_days to KV:', err);
+        }
+      }
+
+      const [disp, histToday] = await Promise.all([dispPromise, histTodayPromise]);
 
       // 3. Формування хронологічного масиву записів
       const pastRecordsChronological = [...pastDays].reverse().flatMap(pd => this.cache.getDayRecords(pd.key) || []);
@@ -252,7 +297,7 @@ export class TelemetryService {
           dispLastUpdateTime: disp.lastUpdateTime || null,
           lastRecordTime: lastRecordSec || null,
           deviceOfflineMinutes: device_offline_minutes,
-          daysFetched: pastDayPromises.map(p => p.pd.key),
+          daysFetched,
           cachedKeys: this.cache.getCachedDayKeys(),
           cachedCounts: this.cache.getCachedDayCounts(),
           pastRecordsCount: pastRecordsChronological.length,
@@ -263,6 +308,17 @@ export class TelemetryService {
 
       const systemState = resolveSystemState(rawResult, { safetyBufferSoc: this.config.BATTERY.SAFETY_BUFFER_SOC });
       rawResult.system_state = systemState.id;
+
+      const snapshotTs = Date.now();
+      this.cache.setRecent(rawResult, snapshotTs);
+      if (kv) {
+        try {
+          await kv.put('telemetry_snapshot', JSON.stringify({ timestamp: snapshotTs, data: rawResult }));
+        } catch (err) {
+          console.error('Failed to save telemetry_snapshot to KV:', err);
+        }
+      }
+
       return rawResult;
     } catch (e) {
       const rawMsg = (e && e.message) ? e.message : 'помилка мережі';
@@ -272,7 +328,19 @@ export class TelemetryService {
         .replace(/\s+/g, ' ')
         .trim();
 
-      const recent = this.cache.getRecent();
+      let recent = this.cache.getRecent();
+      if (!recent && this.env && this.env.NOTIFY_KV) {
+        try {
+          const snap = await this.env.NOTIFY_KV.get('telemetry_snapshot', { type: 'json' });
+          if (snap && snap.data) {
+            this.cache.setRecent(snap.data, snap.timestamp || Date.now());
+            recent = snap.data;
+          }
+        } catch (err) {
+          console.error('Failed to read telemetry_snapshot fallback from KV:', err);
+        }
+      }
+
       if (recent) {
         console.error("Deye fetch error, serving previous in-memory telemetry with offline warning:", e);
         return {

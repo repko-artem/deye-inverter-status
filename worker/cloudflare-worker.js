@@ -15,13 +15,51 @@ import { resolveSystemState, SystemStateId, SystemState } from './domain/system-
 import { processTelegramNotifications } from './services/telegram-notifier.js';
 
 /**
- * Отримання свіжої телеметрії (з кешуванням на рівні інстансу)
+ * Отримання телеметрії з багаторівневим кешуванням (Memory + KV Snapshot + SWR)
  */
-async function getCachedTelemetry(env) {
-  return globalCache.getOrFetch(() => {
+async function getCachedTelemetry(env, ctx, isBypass = false) {
+  if (!isBypass && globalCache.isFresh()) {
+    return globalCache.getRecent();
+  }
+
+  const triggerFetch = () => globalCache.getOrFetch(() => {
     const service = new TelemetryService(env, globalCache, CONFIG);
     return service.getTelemetry();
   });
+
+  if (!isBypass) {
+    const swrMaxAgeMs = CONFIG.CACHE.SWR_MAX_AGE_MS || 300000;
+    const recent = globalCache.getRecent();
+    if (recent && (globalCache.getAgeSec() * 1000) < swrMaxAgeMs) {
+      if (ctx && ctx.waitUntil) {
+        ctx.waitUntil(triggerFetch().catch(err => console.error('SWR refresh error:', err)));
+      }
+      return recent;
+    }
+
+    if (!recent && env && env.NOTIFY_KV) {
+      try {
+        const snap = await env.NOTIFY_KV.get('telemetry_snapshot', { type: 'json' });
+        if (snap && snap.data && snap.timestamp) {
+          globalCache.setRecent(snap.data, snap.timestamp);
+          const ageMs = Date.now() - snap.timestamp;
+          if (ageMs < CONFIG.CACHE.TTL_MS) {
+            return snap.data;
+          }
+          if (ageMs < swrMaxAgeMs) {
+            if (ctx && ctx.waitUntil) {
+              ctx.waitUntil(triggerFetch().catch(err => console.error('SWR refresh error:', err)));
+            }
+            return snap.data;
+          }
+        }
+      } catch (err) {
+        console.error('Failed to read telemetry_snapshot from KV:', err);
+      }
+    }
+  }
+
+  return triggerFetch();
 }
 
 /**
@@ -36,22 +74,25 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const isApi = (url.pathname === "/api/status" || url.pathname === "/status.json");
+    const isGetOrHead = (request.method === 'GET' || request.method === 'HEAD');
 
     // 1. Перевірка Edge-кешу Cloudflare (глобальна CDN)
     const cache = (typeof caches !== 'undefined' && caches.default) ? caches.default : null;
-    const normalizedKey = new Request(url.origin + (isApi ? "/api/status" : "/"), request);
+    const normalizedKey = new Request(url.origin + (isApi ? "/api/status" : "/"), { method: 'GET' });
     const isBypass = (url.searchParams.get("fresh") === "1" || url.searchParams.get("bypass") === "1");
 
-    if (!isBypass && cache) {
+    if (!isBypass && isGetOrHead && cache) {
       const cached = await cache.match(normalizedKey);
       if (cached) {
-        return cached;
+        return request.method === 'HEAD'
+          ? new Response(null, { status: cached.status, headers: cached.headers })
+          : cached;
       }
     }
 
-    // 2. Отримання даних через централізований серверний кеш
-    const data = await getCachedTelemetry(env);
-    const cacheAgeSec = globalCache.getAgeSec();
+    // 2. Отримання даних через багаторівневий кеш (Memory + KV + SWR)
+    const data = await getCachedTelemetry(env, ctx, isBypass);
+    const cacheAgeSec = Math.max(0, globalCache.getAgeSec());
 
     // Перевірка та відправка сповіщень Telegram (асинхронно у фоні)
     if (ctx && ctx.waitUntil) {
@@ -90,8 +131,12 @@ export default {
     }
 
     // Зберігаємо в CDN-кеш Cloudflare
-    if (!isBypass && cache && ctx && ctx.waitUntil) {
+    if (!isBypass && isGetOrHead && cache && ctx && ctx.waitUntil) {
       ctx.waitUntil(cache.put(normalizedKey, response.clone()));
+    }
+
+    if (request.method === 'HEAD') {
+      return new Response(null, { status: response.status, headers: response.headers });
     }
 
     return response;

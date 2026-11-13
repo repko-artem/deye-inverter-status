@@ -1,6 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy, getFreshTelemetry, globalCache } from '../worker/cloudflare-worker.js';
+import worker, { analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy, getFreshTelemetry, globalCache } from '../worker/cloudflare-worker.js';
+import { compactHistoryRecord, getPastDaysList } from '../worker/services/telemetry-service.js';
 
 describe('Outage Journal Analysis (analyzeMultiDayOutages)', () => {
   test('returns empty summary when records array is empty', () => {
@@ -626,6 +627,336 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
       assert.equal(html.includes('Триває 2 год'), false, 'HTML must not have phantom 2 hours added to ongoing blackout');
     } finally {
       globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+function createMockKV(initial = {}) {
+  const store = new Map(Object.entries(initial));
+  return {
+    store,
+    async get(key, opts) {
+      const val = store.get(key);
+      if (val === undefined) return null;
+      if (opts && opts.type === 'json') {
+        return typeof val === 'string' ? JSON.parse(val) : val;
+      }
+      return val;
+    },
+    async put(key, val) {
+      store.set(key, typeof val === 'string' ? val : JSON.stringify(val));
+    }
+  };
+}
+
+describe('Worker Performance Optimization (KV Caching, SWR & HEAD Requests)', () => {
+  test('compactHistoryRecord preserves required telemetry fields and strips bulky unused fields', () => {
+    const compacted = compactHistoryRecord({
+      dateTime: 1794400000,
+      wirePower: 5000,
+      batteryPower: -1000,
+      usePower: 3200,
+      batterySoc: 95,
+      dischargePower: 250,
+      extraUnusedField: 'huge payload',
+      irPower: 0,
+      generationPower: 0
+    });
+
+    assert.deepEqual(compacted, {
+      dateTime: 1794400000,
+      wirePower: 5000,
+      batteryPower: -1000,
+      usePower: 3200,
+      batterySoc: 95,
+      dischargePower: 250
+    });
+  });
+
+  test('loads past-day history from NOTIFY_KV without calling Deye API for cached past days and does not call device-list', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const pastDays = getPastDaysList(nowSec);
+      const preCachedPastHistory = {};
+      for (const pd of pastDays) {
+        preCachedPastHistory[pd.key] = [
+          { dateTime: nowSec - pd.offset * 86400, wirePower: 5000, batteryPower: 0, usePower: 2200, batterySoc: 100 }
+        ];
+      }
+
+      const kv = createMockKV({
+        history_past_days: JSON.stringify(preCachedPastHistory)
+      });
+
+      const fetchedUrls = [];
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        fetchedUrls.push(urlStr);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 100,
+              batteryBv: 650.0,
+              gridRelayStatus: 'on',
+              wirePower: 5000,
+              batteryPower: 0,
+              batteryStatus: 'STANDBY',
+              usePower: 2500,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: nowSec
+            })
+          };
+        }
+        if (urlStr.includes('/maintain-s/history/batteryPower/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              records: [{ dateTime: nowSec - 300, wirePower: 5000, batteryPower: 0, usePower: 2500, batterySoc: 100 }]
+            })
+          };
+        }
+        return { ok: false, status: 404, text: async () => '{}' };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com',
+        NOTIFY_KV: kv
+      };
+
+      const data = await getFreshTelemetry(env);
+      assert.equal(data.battery_soc, 100);
+      // Only 2 HTTP calls: station/display + today's history (no 7 past-day calls and no device-list call)
+      assert.equal(fetchedUrls.length, 2, `Expected exactly 2 HTTP requests, got ${fetchedUrls.length}: ${fetchedUrls.join(', ')}`);
+      assert.equal(fetchedUrls.some(u => u.includes('device-list')), false, 'Should not fetch unused device-list');
+      assert.equal(data.debug_info.daysFetched.length, 0, 'No past days should be fetched from HTTP when present in KV');
+
+      // Telemetry snapshot must be persisted to KV
+      const savedSnap = await kv.get('telemetry_snapshot', { type: 'json' });
+      assert.ok(savedSnap && savedSnap.data && savedSnap.timestamp, 'telemetry_snapshot must be saved to KV');
+      assert.equal(savedSnap.data.battery_soc, 100);
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalCache.clear();
+    }
+  });
+
+  test('persists newly fetched past-day history into NOTIFY_KV when KV history cache misses', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const kv = createMockKV();
+
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 98,
+              batteryBv: 648.0,
+              gridRelayStatus: 'on',
+              wirePower: 4000,
+              batteryPower: 0,
+              usePower: 2000,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: nowSec
+            })
+          };
+        }
+        if (urlStr.includes('/maintain-s/history/batteryPower/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              records: [{
+                dateTime: nowSec - 300,
+                wirePower: 4000,
+                batteryPower: 0,
+                usePower: 2000,
+                batterySoc: 98,
+                extraUnusedBlob: 'should-be-stripped'
+              }]
+            })
+          };
+        }
+        return { ok: false, status: 404, text: async () => '{}' };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com',
+        NOTIFY_KV: kv
+      };
+
+      const data = await getFreshTelemetry(env);
+      assert.equal(data.debug_info.daysFetched.length, 7, 'All 7 missing past days should be fetched once');
+
+      const savedPast = await kv.get('history_past_days', { type: 'json' });
+      assert.ok(savedPast && Object.keys(savedPast).length === 7, 'All 7 past days must be cached in KV');
+      const firstKey = Object.keys(savedPast)[0];
+      assert.equal(savedPast[firstKey][0].extraUnusedBlob, undefined, 'Compacted history records must strip unused fields');
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalCache.clear();
+    }
+  });
+
+  test('cold isolate serves KV telemetry_snapshot via SWR and refreshes in background via ctx.waitUntil', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    try {
+      const staleSnapshotData = {
+        updated_at: '14:00',
+        battery_soc: 88,
+        battery_voltage: 644.0,
+        is_online: true,
+        is_grid_on: true,
+        is_charging: false,
+        use_power_kw: 4.0,
+        charge_power_kw: 0,
+        discharge_power_kw: 0,
+        grid_power_kw: 4.0,
+        est_hours_formatted: '10 год',
+        est_time_until: 'до 00:00',
+        full_est_hours_formatted: '12 год',
+        stat_active_kw: '4.0',
+        stat_night_kw: '3.0',
+        discharge_24h_kwh: '0.0',
+        discharge_rate_pct: '0',
+        outages: [],
+        journal: { count: 0, totalHours24hFormatted: '0 хв', minSoc: 100 }
+      };
+
+      // 2 minutes old (> 60s TTL, < 5m SWR max age)
+      const kv = createMockKV({
+        telemetry_snapshot: JSON.stringify({
+          timestamp: Date.now() - 120 * 1000,
+          data: staleSnapshotData
+        })
+      });
+
+      let fetchCalls = 0;
+      globalThis.fetch = async (url) => {
+        fetchCalls++;
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 99,
+              batteryBv: 651.0,
+              gridRelayStatus: 'on',
+              wirePower: 5000,
+              batteryPower: 0,
+              usePower: 2500,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: Math.floor(Date.now() / 1000)
+            })
+          };
+        }
+        return { ok: true, status: 200, text: async () => JSON.stringify({ records: [] }) };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com',
+        NOTIFY_KV: kv
+      };
+
+      const backgroundPromises = [];
+      const ctx = {
+        waitUntil(p) {
+          backgroundPromises.push(p);
+        }
+      };
+
+      const res = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/status'), env, ctx);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.battery_soc, 88, 'Should immediately serve stale KV snapshot on cold start');
+      assert.ok(backgroundPromises.length >= 1, 'Should schedule background SWR refresh via ctx.waitUntil');
+
+      await Promise.all(backgroundPromises);
+      assert.ok(fetchCalls >= 1, 'Background SWR task should fetch fresh data from Deye API');
+      assert.equal(globalCache.getRecent().battery_soc, 99, 'In-memory cache should be updated by background refresh');
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalCache.clear();
+    }
+  });
+
+  test('HEAD requests return 200 OK with empty body and normalize cache.put key to GET', async () => {
+    globalCache.clear();
+    const originalCaches = globalThis.caches;
+    const putKeys = [];
+
+    try {
+      globalCache.setRecent({
+        updated_at: '14:20',
+        battery_soc: 100,
+        battery_voltage: 653.0,
+        is_online: true,
+        is_grid_on: true,
+        is_charging: false,
+        use_power_kw: 3.5,
+        charge_power_kw: 0,
+        discharge_power_kw: 0,
+        grid_power_kw: 3.5,
+        est_hours_formatted: '12 год',
+        est_time_until: 'до 02:20',
+        full_est_hours_formatted: '12 год',
+        stat_active_kw: '3.5',
+        stat_night_kw: '2.5',
+        discharge_24h_kwh: '0.0',
+        discharge_rate_pct: '0',
+        outages: [],
+        journal: { count: 0, totalHours24hFormatted: '0 хв', minSoc: 100 }
+      }, Date.now());
+
+      globalThis.caches = {
+        default: {
+          async match() { return undefined; },
+          async put(reqKey) {
+            if (reqKey.method !== 'GET') {
+              throw new TypeError(`Cannot put a ${reqKey.method} request into the cache`);
+            }
+            putKeys.push({ url: reqKey.url, method: reqKey.method });
+          }
+        }
+      };
+
+      const backgroundPromises = [];
+      const ctx = { waitUntil(p) { backgroundPromises.push(p); } };
+      const env = { DEYE_TOKEN: 't', DEYE_STATION_ID: 's' };
+
+      const headHtmlRes = await worker.fetch(new Request('https://power.osbbnd.workers.dev/', { method: 'HEAD' }), env, ctx);
+      assert.equal(headHtmlRes.status, 200);
+      assert.equal(await headHtmlRes.text(), '');
+
+      const headApiRes = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/status', { method: 'HEAD' }), env, ctx);
+      assert.equal(headApiRes.status, 200);
+      assert.equal(await headApiRes.text(), '');
+
+      await Promise.all(backgroundPromises);
+      assert.deepEqual(putKeys, [
+        { url: 'https://power.osbbnd.workers.dev/', method: 'GET' },
+        { url: 'https://power.osbbnd.workers.dev/api/status', method: 'GET' }
+      ]);
+    } finally {
+      globalThis.caches = originalCaches;
+      globalCache.clear();
     }
   });
 });
