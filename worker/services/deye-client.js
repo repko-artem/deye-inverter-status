@@ -84,4 +84,23 @@ export class DeyeClient {
     const url = `${this.apiBase}/maintain-s/power/deye/device/${this.stationId}/device-list?deviceType=INVERTER`;
     return this.fetchJson(url);
   }
+
+  /**
+   * Отримання 5-хвилинної історії трифазної напруги мережі та навантаження з телеметрії пристрою
+   * @param {string|number} deviceId
+   * @param {number} year
+   * @param {number} month
+   * @param {number} day
+   */
+  async getDailyDeviceVoltages(deviceId, year, month, day) {
+    if (!deviceId) return [];
+    const pad = (n) => String(n).padStart(2, '0');
+    const dayStr = `${year}/${pad(month)}/${pad(day)}`;
+    const fields = 'G_V_L1,G_V_L2,G_V_L3,C_V_L1,C_V_L2,C_V_L3';
+    const url = `${this.apiBase}/device-s/device/${deviceId}/stats/day?day=${dayStr}&lan=2&fields=${fields}`;
+    const data = await this.fetchJson(url);
+    if (Array.isArray(data)) return data;
+    if (data && Array.isArray(data.data)) return data.data;
+    return [];
+  }
 }

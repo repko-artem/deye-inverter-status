@@ -1,7 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy, getFreshTelemetry, globalCache } from '../worker/cloudflare-worker.js';
-import { compactHistoryRecord, getPastDaysList } from '../worker/services/telemetry-service.js';
+import { compactHistoryRecord, getPastDaysList, mergeDeviceVoltagesIntoRecords } from '../worker/services/telemetry-service.js';
+import { classifyOutageEvent } from '../worker/domain/outages.js';
 
 describe('Outage Journal Analysis (analyzeMultiDayOutages)', () => {
   test('returns empty summary when records array is empty', () => {
@@ -958,5 +959,148 @@ describe('Worker Performance Optimization (KV Caching, SWR & HEAD Requests)', ()
       globalThis.caches = originalCaches;
       globalCache.clear();
     }
+  });
+});
+
+describe('3-Phase Voltage Tracking & Outage Cause Classification', () => {
+  test('mergeDeviceVoltagesIntoRecords aligns 5-min collectionTime offsets onto stats/daily records', () => {
+    const bucket0 = 1794580200; // divisible by 300
+    const bucket1 = 1794580500;
+    const records = [
+      { dateTime: bucket0, wirePower: 5000, batteryPower: 0, usePower: 2500, batterySoc: 100 },
+      { dateTime: bucket1, wirePower: 0, batteryPower: 3500, usePower: 3500, batterySoc: 99 }
+    ];
+
+    const seriesList = [
+      {
+        storageName: 'G_V_L1',
+        detailList: [
+          { collectionTime: bucket0 + 78, value: 239.44 },
+          { collectionTime: bucket1 + 84, value: 241.23 }
+        ]
+      },
+      {
+        storageName: 'G_V_L2',
+        detailList: [
+          { collectionTime: bucket0 + 78, value: 255.12 },
+          { collectionTime: bucket1 + 84, value: 258.64 }
+        ]
+      },
+      {
+        storageName: 'G_V_L3',
+        detailList: [
+          { collectionTime: bucket0 + 78, value: 240.1 },
+          { collectionTime: bucket1 + 84, value: 242.0 }
+        ]
+      },
+      {
+        storageName: 'C_V_L1',
+        detailList: [{ collectionTime: bucket1 + 84, value: 232.1 }]
+      },
+      {
+        storageName: 'C_V_L2',
+        detailList: [{ collectionTime: bucket1 + 84, value: 232.4 }]
+      },
+      {
+        storageName: 'C_V_L3',
+        detailList: [{ collectionTime: bucket1 + 84, value: 231.9 }]
+      }
+    ];
+
+    const latest = mergeDeviceVoltagesIntoRecords(records, seriesList);
+    assert.equal(records[0].v1, 239.4);
+    assert.equal(records[0].v2, 255.1);
+    assert.equal(records[1].v2, 258.6);
+    assert.equal(records[1].lv2, 232.4);
+    assert.deepEqual(latest.grid, { l1: 241.2, l2: 258.6, l3: 242, ts: bucket1 + 84 });
+    assert.deepEqual(latest.load, { l1: 232.1, l2: 232.4, l3: 231.9, ts: bucket1 + 84 });
+  });
+
+  test('analyzeMultiDayOutages distinguishes 0V blackout, >255V overvoltage (even >25m), and <195V undervoltage', () => {
+    const t0 = 1794570000;
+    const records = [
+      // Normal grid before Event 1
+      { dateTime: t0, wirePower: 5000, batteryPower: 0, batterySoc: 100, v1: 235, v2: 242, v3: 238 },
+      // Event 1: Overvoltage on L2 lasting 35 minutes (8 ticks * 5m = 35m), never drops to 0V
+      ...Array.from({ length: 8 }, (_, i) => ({
+        dateTime: t0 + (i + 1) * 300,
+        wirePower: 0,
+        batteryPower: 3500,
+        usePower: 3500,
+        batterySoc: 100 - Math.floor(i / 2),
+        v1: 240,
+        v2: i === 2 ? 258.6 : 251.2,
+        v3: 241
+      })),
+      // Recovery
+      { dateTime: t0 + 9 * 300, wirePower: 6000, batteryPower: -2000, batterySoc: 96, v1: 236, v2: 245, v3: 239 },
+      // Event 2: Undervoltage on L3 (191.4V) for 15 min
+      { dateTime: t0 + 10 * 300, wirePower: 0, batteryPower: 3200, usePower: 3200, batterySoc: 97, v1: 214, v2: 218, v3: 191.4 },
+      { dateTime: t0 + 11 * 300, wirePower: 0, batteryPower: 3200, usePower: 3200, batterySoc: 96, v1: 215, v2: 219, v3: 199.8 },
+      { dateTime: t0 + 12 * 300, wirePower: 0, batteryPower: 3200, usePower: 3200, batterySoc: 95, v1: 216, v2: 220, v3: 202.1 },
+      { dateTime: t0 + 13 * 300, wirePower: 6000, batteryPower: -2000, batterySoc: 95, v1: 222, v2: 225, v3: 210 },
+      // Event 3: Real DTEK 0V blackout (10 min - short, but clearly 0V on all phases!)
+      { dateTime: t0 + 14 * 300, wirePower: 0, batteryPower: 4000, usePower: 4000, batterySoc: 96, v1: 0, v2: 0, v3: 0 },
+      { dateTime: t0 + 15 * 300, wirePower: 0, batteryPower: 4000, usePower: 4000, batterySoc: 95, v1: 0, v2: 0, v3: 0 },
+      { dateTime: t0 + 16 * 300, wirePower: 6000, batteryPower: -2000, batterySoc: 95, v1: 231, v2: 232, v3: 230 }
+    ];
+
+    const journal = analyzeMultiDayOutages(records, new Date((t0 + 17 * 300) * 1000));
+    assert.equal(journal.validEvents.length, 3);
+
+    const [evOver, evUnder, evBlackout] = journal.validEvents;
+    assert.equal(evOver.eventType, 'VOLTAGE_SAG');
+    assert.equal(evOver.voltageCause, 'OVERVOLTAGE');
+    assert.ok(evOver.eventLabel.includes('Завищена напруга (L2: 259 В)'), `Got: ${evOver.eventLabel}`);
+
+    assert.equal(evUnder.eventType, 'VOLTAGE_SAG');
+    assert.equal(evUnder.voltageCause, 'UNDERVOLTAGE');
+    assert.ok(evUnder.eventLabel.includes('Занижена напруга (L3: 191 В)'), `Got: ${evUnder.eventLabel}`);
+
+    assert.equal(evBlackout.eventType, 'BLACKOUT');
+    assert.equal(evBlackout.voltageCause, 'BLACKOUT');
+    assert.ok(evBlackout.eventLabel.includes('0 В'), `Got: ${evBlackout.eventLabel}`);
+  });
+
+  test('renderHTML renders 3-phase grid voltages bar and overvoltage banner cleanly', () => {
+    const html = renderHTML({
+      version: '1.6.0',
+      updated_at: '16:15',
+      battery_soc: 96,
+      battery_voltage: 649.1,
+      is_grid_on: false,
+      is_charging: false,
+      use_power_kw: 4.5,
+      charge_power_kw: 0,
+      discharge_power_kw: 4.5,
+      grid_power_kw: 0,
+      grid_voltages: { l1: 241.2, l2: 255.4, l3: 240.8 },
+      load_voltages: { l1: 232.0, l2: 232.2, l3: 231.8 },
+      est_hours_formatted: '11 год',
+      est_time_until: 'до 03:15',
+      full_est_hours_formatted: '12 год',
+      stat_active_kw: '4.5',
+      stat_night_kw: '3.0',
+      discharge_24h_kwh: '4.2',
+      discharge_rate_pct: '6.9',
+      current_outage: {
+        start: '16:05',
+        durationMin: 15,
+        startSoc: 100,
+        voltageCause: 'OVERVOLTAGE',
+        maxPhase: 'L2',
+        maxGridV: 255.4
+      },
+      outages: [],
+      journal: { count: 1, blackoutCount24h: 0, voltageSagCount24h: 1, totalHours24hFormatted: '15 хв', minSoc: 96 }
+    });
+
+    assert.ok(html.includes('Захист від перенапруги (з 16:05)'));
+    assert.ok(html.includes('Напруга міської мережі (вхід)') || html.includes('Напруга міської мережі (по фазах)'));
+    assert.ok(html.includes('L1'));
+    assert.ok(html.includes('255'));
+    assert.ok(html.includes('~232 В'));
+    assert.ok(!html.includes('undefined'));
+    assert.ok(!html.includes('NaN'));
   });
 });

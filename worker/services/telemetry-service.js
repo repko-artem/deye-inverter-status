@@ -8,6 +8,114 @@ import { resolveSystemState } from '../domain/system-state.js';
 import { nowUtcSec, formatKyivTime, formatKyivDate } from '../domain/time.js';
 
 /**
+ * Мапа полів напруги пристрою Deye у компактні ключі записів історії.
+ */
+const DEVICE_VOLTAGE_KEY_MAP = {
+  G_V_L1: 'v1',
+  G_V_L2: 'v2',
+  G_V_L3: 'v3',
+  C_V_L1: 'lv1',
+  C_V_L2: 'lv2',
+  C_V_L3: 'lv3'
+};
+
+/**
+ * Об'єднує 5-хвилинні серії пофазної напруги (/device-s/device/{id}/stats/day)
+ * із записами історії станції (/stats/daily) за 5-хвилинними інтервалами.
+ * @param {Array<Object>} records
+ * @param {Array<Object>} seriesList
+ * @returns {{ grid: {l1:number,l2:number,l3:number,ts:number}|null, load: {l1:number,l2:number,l3:number,ts:number}|null }}
+ */
+export function mergeDeviceVoltagesIntoRecords(records, seriesList) {
+  if (!Array.isArray(seriesList) || seriesList.length === 0) {
+    return { grid: null, load: null };
+  }
+
+  const byBucket = new Map();
+  let latestGridTs = 0;
+  let latestLoadTs = 0;
+  const latestByKey = {};
+
+  for (const series of seriesList) {
+    if (!series || !series.storageName) continue;
+    const mappedKey = DEVICE_VOLTAGE_KEY_MAP[series.storageName];
+    if (!mappedKey || !Array.isArray(series.detailList)) continue;
+
+    for (const pt of series.detailList) {
+      if (!pt || pt.collectionTime == null || pt.value == null) continue;
+      let ts = Number(pt.collectionTime);
+      if (ts > 1e11) ts = Math.floor(ts / 1000);
+      const valNum = Number(pt.value);
+      if (!Number.isFinite(ts) || !Number.isFinite(valNum)) continue;
+      const val = Math.round(valNum * 10) / 10;
+
+      const floorBucket = Math.floor(ts / 300) * 300;
+      const roundBucket = Math.round(ts / 300) * 300;
+
+      let entry = byBucket.get(floorBucket);
+      if (!entry) {
+        entry = {};
+        byBucket.set(floorBucket, entry);
+      }
+      entry[mappedKey] = val;
+
+      if (roundBucket !== floorBucket) {
+        let roundEntry = byBucket.get(roundBucket);
+        if (!roundEntry) {
+          roundEntry = {};
+          byBucket.set(roundBucket, roundEntry);
+        }
+        if (roundEntry[mappedKey] === undefined) {
+          roundEntry[mappedKey] = val;
+        }
+      }
+
+      if (!latestByKey[mappedKey] || ts >= latestByKey[mappedKey].ts) {
+        latestByKey[mappedKey] = { val, ts };
+      }
+      if (mappedKey.startsWith('v') && ts > latestGridTs) latestGridTs = ts;
+      if (mappedKey.startsWith('lv') && ts > latestLoadTs) latestLoadTs = ts;
+    }
+  }
+
+  if (Array.isArray(records)) {
+    for (const r of records) {
+      if (!r || r.dateTime == null) continue;
+      const ts = Number(r.dateTime);
+      const bucket = Math.floor(ts / 300) * 300;
+      const entry = byBucket.get(bucket) || byBucket.get(Math.round(ts / 300) * 300);
+      if (!entry) continue;
+      if (entry.v1 !== undefined) r.v1 = entry.v1;
+      if (entry.v2 !== undefined) r.v2 = entry.v2;
+      if (entry.v3 !== undefined) r.v3 = entry.v3;
+      if (entry.lv1 !== undefined) r.lv1 = entry.lv1;
+      if (entry.lv2 !== undefined) r.lv2 = entry.lv2;
+      if (entry.lv3 !== undefined) r.lv3 = entry.lv3;
+    }
+  }
+
+  const grid = (latestByKey.v1 && latestByKey.v2 && latestByKey.v3)
+    ? {
+        l1: latestByKey.v1.val,
+        l2: latestByKey.v2.val,
+        l3: latestByKey.v3.val,
+        ts: latestGridTs
+      }
+    : null;
+
+  const load = (latestByKey.lv1 && latestByKey.lv2 && latestByKey.lv3)
+    ? {
+        l1: latestByKey.lv1.val,
+        l2: latestByKey.lv2.val,
+        l3: latestByKey.lv3.val,
+        ts: latestLoadTs
+      }
+    : null;
+
+  return { grid, load };
+}
+
+/**
  * Скорочує запис добової історії до полів, необхідних доменній логіці та графікам.
  */
 export function compactHistoryRecord(r) {
@@ -22,6 +130,9 @@ export function compactHistoryRecord(r) {
   if (r.dischargePower !== undefined) {
     out.dischargePower = r.dischargePower;
   }
+  if (typeof r.v1 === 'number') out.v1 = r.v1;
+  if (typeof r.v2 === 'number') out.v2 = r.v2;
+  if (typeof r.v3 === 'number') out.v3 = r.v3;
   return out;
 }
 
@@ -58,6 +169,8 @@ export class TelemetryService {
       throw new Error("Missing required secrets: DEYE_STATION_ID and/or DEYE_TOKEN. Please configure them via wrangler secret or .dev.vars");
     }
 
+    this.stationId = stationId;
+    this.deviceId = env.DEYE_DEVICE_ID || (String(stationId) === '62623074' ? '15987482' : null);
     this.client = new DeyeClient(apiBase, token, stationId);
   }
 
@@ -71,19 +184,26 @@ export class TelemetryService {
 
     try {
       const kv = this.env && this.env.NOTIFY_KV;
+      const pastHistoryKvKey = this.deviceId ? 'history_past_days_v2' : 'history_past_days';
 
-      // 1. Паралельний запит: поточна станція + сьогоднішня історія (2 з'єднання)
+      // 1. Паралельний запит: поточна станція + сьогоднішня історія + (за наявності deviceId) фазні напруги
       const dispPromise = this.client.getStationDisplay();
       const histTodayPromise = this.client.getDailyBatteryHistory(yToday, mToday, dToday).catch(err => {
         console.error("Помилка завантаження сьогоднішньої історії (м'який фолбек):", err);
         return null;
       });
+      const todayVoltagesPromise = this.deviceId
+        ? this.client.getDailyDeviceVoltages(this.deviceId, yToday, mToday, dToday).catch(err => {
+            console.error("Помилка завантаження сьогоднішньої напруги пристрою (м'який фолбек):", err);
+            return [];
+          })
+        : Promise.resolve([]);
 
       // 2. Перевірка кешу минулих днів і довантаження з Cloudflare KV за потреби
       let missingPastDays = pastDays.filter(pd => !this.cache.getDayRecords(pd.key));
       if (missingPastDays.length > 0 && kv) {
         try {
-          const kvHistory = await kv.get('history_past_days', { type: 'json' });
+          const kvHistory = await kv.get(pastHistoryKvKey, { type: 'json' });
           if (kvHistory && typeof kvHistory === 'object') {
             for (const pd of missingPastDays) {
               if (Array.isArray(kvHistory[pd.key]) && kvHistory[pd.key].length > 0) {
@@ -93,12 +213,12 @@ export class TelemetryService {
             missingPastDays = pastDays.filter(pd => !this.cache.getDayRecords(pd.key));
           }
         } catch (err) {
-          console.error('Failed to read history_past_days from KV:', err);
+          console.error(`Failed to read ${pastHistoryKvKey} from KV:`, err);
         }
       }
 
-      // 3. Довантаження відсутніх днів батчами з обмеженням паралельності (<= 3 + 2 основних <= 6 ліміту CF)
-      const concurrency = this.config.CACHE?.HISTORY_CONCURRENCY || 3;
+      // 3. Довантаження відсутніх днів батчами з обмеженням паралельності (<= 6 з'єднань CF)
+      const concurrency = this.deviceId ? 1 : (this.config.CACHE?.HISTORY_CONCURRENCY || 3);
       const daysFetched = [];
       let fetchedAnyPastDay = false;
 
@@ -107,17 +227,25 @@ export class TelemetryService {
         const batchResults = await Promise.all(
           batch.map(async (pd) => {
             try {
-              const json = await this.client.getDailyBatteryHistory(pd.y, pd.m, pd.day);
-              return { pd, json };
+              const [json, voltageSeries] = await Promise.all([
+                this.client.getDailyBatteryHistory(pd.y, pd.m, pd.day),
+                this.deviceId
+                  ? this.client.getDailyDeviceVoltages(this.deviceId, pd.y, pd.m, pd.day).catch(() => [])
+                  : Promise.resolve([])
+              ]);
+              return { pd, json, voltageSeries };
             } catch (err) {
               console.error(`Error fetching history for ${pd.key}:`, err);
-              return { pd, json: null };
+              return { pd, json: null, voltageSeries: [] };
             }
           })
         );
-        for (const { pd, json } of batchResults) {
+        for (const { pd, json, voltageSeries } of batchResults) {
           daysFetched.push(pd.key);
           if (json && Array.isArray(json.records) && json.records.length > 0) {
+            if (Array.isArray(voltageSeries) && voltageSeries.length > 0) {
+              mergeDeviceVoltagesIntoRecords(json.records, voltageSeries);
+            }
             const compacted = json.records.map(compactHistoryRecord);
             this.cache.setDayRecords(pd.key, compacted);
             fetchedAnyPastDay = true;
@@ -134,17 +262,18 @@ export class TelemetryService {
               kvPayload[pd.key] = recs;
             }
           }
-          await kv.put('history_past_days', JSON.stringify(kvPayload));
+          await kv.put(pastHistoryKvKey, JSON.stringify(kvPayload));
         } catch (err) {
-          console.error('Failed to save history_past_days to KV:', err);
+          console.error(`Failed to save ${pastHistoryKvKey} to KV:`, err);
         }
       }
 
-      const [disp, histToday] = await Promise.all([dispPromise, histTodayPromise]);
+      const [disp, histToday, todayVoltages] = await Promise.all([dispPromise, histTodayPromise, todayVoltagesPromise]);
 
       // 3. Формування хронологічного масиву записів
       const pastRecordsChronological = [...pastDays].reverse().flatMap(pd => this.cache.getDayRecords(pd.key) || []);
       const todayRecords = (histToday && histToday.records) || [];
+      const latestVoltages = mergeDeviceVoltagesIntoRecords(todayRecords, todayVoltages);
       const multiDayRecords = [...pastRecordsChronological, ...todayRecords];
       const records24h = multiDayRecords.slice(-288); // 24h = 288 точок по 5 хв
 
@@ -257,6 +386,13 @@ export class TelemetryService {
         this.config
       );
 
+      const fallbackGridVoltages = (lastRecord && typeof lastRecord.v1 === 'number' && typeof lastRecord.v2 === 'number' && typeof lastRecord.v3 === 'number')
+        ? { l1: lastRecord.v1, l2: lastRecord.v2, l3: lastRecord.v3, ts: lastRecord.dateTime }
+        : null;
+      const fallbackLoadVoltages = (lastRecord && typeof lastRecord.lv1 === 'number' && typeof lastRecord.lv2 === 'number' && typeof lastRecord.lv3 === 'number')
+        ? { l1: lastRecord.lv1, l2: lastRecord.lv2, l3: lastRecord.lv3, ts: lastRecord.dateTime }
+        : null;
+
       const rawResult = {
         version: this.config.APP_VERSION,
         is_online,
@@ -271,6 +407,8 @@ export class TelemetryService {
         current_outage: outageJournal.currentOutage,
         battery_soc: soc,
         battery_voltage: voltage,
+        grid_voltages: latestVoltages?.grid || fallbackGridVoltages,
+        load_voltages: latestVoltages?.load || fallbackLoadVoltages,
         charge_power_kw: is_online ? charge_power_kw : 0,
         discharge_power_kw: is_online ? discharge_power_kw : 0,
         charge_rate_pct: is_online ? charge_rate_pct : "0",

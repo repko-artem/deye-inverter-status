@@ -1,6 +1,6 @@
 {
   "name": "deye-inverter-status",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Real-time status page, blackout monitor, and telemetry API for Deye hybrid inverters",
   "type": "module",
   "scripts": {

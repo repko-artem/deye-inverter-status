@@ -18,7 +18,42 @@ export const OutageType = Object.freeze({
 });
 
 /**
- * Класифікує подію відключення за характером (блекаут ДТЕК vs просідання/стрибок напруги).
+ * Допоміжна функція для накопичення статистики вхідної напруги мережі під час події відключення.
+ */
+function updateEventVoltageStats(curr, record, isPreTrigger = false) {
+  if (!record || typeof record.v1 !== 'number' || typeof record.v2 !== 'number' || typeof record.v3 !== 'number') {
+    return;
+  }
+  const maxV = Math.max(record.v1, record.v2, record.v3);
+  if (!isPreTrigger) {
+    curr.voltageSampleCount = (curr.voltageSampleCount || 0) + 1;
+    curr.lastGridVoltages = { l1: record.v1, l2: record.v2, l3: record.v3 };
+    if (maxV < 50) {
+      curr.zeroVoltageTicks = (curr.zeroVoltageTicks || 0) + 1;
+      return;
+    }
+  }
+  if (maxV < 50) return;
+
+  const phases = [
+    ['L1', record.v1],
+    ['L2', record.v2],
+    ['L3', record.v3]
+  ];
+  for (const [phase, val] of phases) {
+    if (curr.maxGridV === null || val > curr.maxGridV) {
+      curr.maxGridV = val;
+      curr.maxPhase = phase;
+    }
+    if (val >= 50 && (curr.minGridV === null || val < curr.minGridV)) {
+      curr.minGridV = val;
+      curr.minPhase = phase;
+    }
+  }
+}
+
+/**
+ * Класифікує подію відключення за характером (блекаут ДТЕК 0 В vs просідання < 195 В vs перенапруга > 255 В).
  */
 export function classifyOutageEvent(event, config = CONFIG) {
   const maxSagMin = config.THRESHOLDS?.VOLTAGE_SAG_MAX_MINUTES ?? 25;
@@ -27,19 +62,57 @@ export function classifyOutageEvent(event, config = CONFIG) {
   const durationMin = event.durationMin || 0;
   const socDrain = event.socDrain ?? Math.max(0, (event.startSoc || 0) - (event.minSoc || 0));
 
-  // Якщо подія тривала до 25 хв і розряд АКБ не перевищив 3% — це короткочасний стрибок/просідання напруги
+  // 1. Точна класифікація за трифазною вхідною напругою мережі (якщо є дані)
+  if ((event.voltageSampleCount || 0) > 0) {
+    if ((event.zeroVoltageTicks || 0) > 0) {
+      return {
+        type: OutageType.BLACKOUT,
+        voltageCause: 'BLACKOUT',
+        label: '🔴 Відключення ДТЕК (0 В)',
+        badgeColor: '#ef4444',
+        badgeBg: 'rgba(239, 68, 68, 0.15)',
+        description: 'Повне зникнення напруги в міській мережі ДТЕК (0 В).'
+      };
+    }
+
+    if (event.maxGridV !== null && event.maxGridV >= 248 && (event.maxGridV >= 252 || event.minGridV === null || event.minGridV >= 205)) {
+      return {
+        type: OutageType.VOLTAGE_SAG,
+        voltageCause: 'OVERVOLTAGE',
+        label: `📈 Завищена напруга (${event.maxPhase}: ${Math.round(event.maxGridV)} В)`,
+        badgeColor: '#f59e0b',
+        badgeBg: 'rgba(245, 158, 11, 0.15)',
+        description: `Захисне відсікання мережі інвертором через перенапругу (${event.maxPhase} до ${event.maxGridV.toFixed(1)} В, поріг HV1 255 В / повернення < 248 В).`
+      };
+    }
+
+    if (event.minGridV !== null && event.minGridV < 205) {
+      return {
+        type: OutageType.VOLTAGE_SAG,
+        voltageCause: 'UNDERVOLTAGE',
+        label: `📉 Занижена напруга (${event.minPhase}: ${Math.round(event.minGridV)} В)`,
+        badgeColor: '#f59e0b',
+        badgeBg: 'rgba(245, 158, 11, 0.15)',
+        description: `Захисне відсікання мережі інвертором через просідання напруги (${event.minPhase} до ${event.minGridV.toFixed(1)} В, поріг LV1 195 В / повернення > 205 В).`
+      };
+    }
+  }
+
+  // 2. Фолбек-евристика за тривалістю та розрядом (коли телеметрія напруги відсутня)
   if (durationMin <= maxSagMin && socDrain <= maxSagSoc) {
     return {
       type: OutageType.VOLTAGE_SAG,
+      voltageCause: 'VOLTAGE_SAG',
       label: '⚡ Стрибок напруги',
       badgeColor: '#f59e0b',
       badgeBg: 'rgba(245, 158, 11, 0.15)',
-      description: 'Короткочасне відсікання міської мережі захистом інвертора (напруга нижче 195 В). Запобігло аварійному блокуванню ліфтів.'
+      description: 'Короткочасне відсікання міської мережі захистом інвертора (напруга поза межами 195–255 В). Запобігло аварійному блокуванню ліфтів.'
     };
   }
 
   return {
     type: OutageType.BLACKOUT,
+    voltageCause: 'BLACKOUT',
     label: '🔴 Відключення ДТЕК',
     badgeColor: '#ef4444',
     badgeBg: 'rgba(239, 68, 68, 0.15)',
@@ -90,12 +163,24 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
           startTimestampSec: r.dateTime,
           startSoc: Math.round(r.batterySoc || 100), 
           minSoc: Math.round(r.batterySoc || 100), 
-          pointsCount: 1 
+          pointsCount: 1,
+          voltageSampleCount: 0,
+          zeroVoltageTicks: 0,
+          minGridV: null,
+          minPhase: null,
+          maxGridV: null,
+          maxPhase: null,
+          lastGridVoltages: null
         };
+        if (idx > 0) {
+          updateEventVoltageStats(curr, records[idx - 1], true);
+        }
+        updateEventVoltageStats(curr, r, false);
       } else {
         curr.pointsCount++;
         const s = Math.round(r.batterySoc || 100);
         if (s < curr.minSoc) curr.minSoc = s;
+        updateEventVoltageStats(curr, r, false);
       }
     } else {
       if (curr) {
@@ -110,6 +195,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
         curr.socDrain = Math.max(0, curr.startSoc - curr.minSoc);
         const classification = classifyOutageEvent(curr, config);
         curr.eventType = classification.type;
+        curr.voltageCause = classification.voltageCause || classification.type;
         curr.eventLabel = classification.label;
         curr.eventBadgeColor = classification.badgeColor;
         curr.eventBadgeBg = classification.badgeBg;
@@ -140,21 +226,40 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
     curr.isOngoing = true;
     curr.socDrain = Math.max(0, curr.startSoc - curr.minSoc);
 
-    const initialPhaseMin = config.THRESHOLDS?.VOLTAGE_SAG_INITIAL_PHASE_MINUTES ?? 15;
-    const isInitialPhase = curr.durationMin <= initialPhaseMin && curr.socDrain <= 1;
-    curr.isInitialPhase = isInitialPhase;
-    if (isInitialPhase) {
-      curr.eventType = OutageType.VOLTAGE_SAG;
-      curr.eventLabel = '⚡ Перевірка стабільності мережі';
-      curr.eventBadgeColor = '#f59e0b';
-      curr.eventBadgeBg = 'rgba(245, 158, 11, 0.15)';
-      curr.eventDescription = 'Можливе просідання напруги нижче 195 В або початок відключення.';
+    const hasExplicitVoltageCause = curr.voltageSampleCount > 0 && (
+      curr.zeroVoltageTicks > 0 ||
+      (curr.maxGridV !== null && curr.maxGridV >= 248) ||
+      (curr.minGridV !== null && curr.minGridV < 205)
+    );
+
+    if (hasExplicitVoltageCause) {
+      const classification = classifyOutageEvent(curr, config);
+      curr.isInitialPhase = false;
+      curr.eventType = classification.type;
+      curr.voltageCause = classification.voltageCause || classification.type;
+      curr.eventLabel = classification.label;
+      curr.eventBadgeColor = classification.badgeColor;
+      curr.eventBadgeBg = classification.badgeBg;
+      curr.eventDescription = classification.description;
     } else {
-      curr.eventType = OutageType.BLACKOUT;
-      curr.eventLabel = '🔴 Відключення ДТЕК';
-      curr.eventBadgeColor = '#ef4444';
-      curr.eventBadgeBg = 'rgba(239, 68, 68, 0.15)';
-      curr.eventDescription = 'Стійке відключення електромережі ДТЕК.';
+      const initialPhaseMin = config.THRESHOLDS?.VOLTAGE_SAG_INITIAL_PHASE_MINUTES ?? 15;
+      const isInitialPhase = curr.durationMin <= initialPhaseMin && curr.socDrain <= 1;
+      curr.isInitialPhase = isInitialPhase;
+      if (isInitialPhase) {
+        curr.eventType = OutageType.VOLTAGE_SAG;
+        curr.voltageCause = 'VOLTAGE_SAG';
+        curr.eventLabel = '⚡ Перевірка стабільності мережі';
+        curr.eventBadgeColor = '#f59e0b';
+        curr.eventBadgeBg = 'rgba(245, 158, 11, 0.15)';
+        curr.eventDescription = 'Можливе виходження напруги за межі 195–255 В або початок відключення.';
+      } else {
+        curr.eventType = OutageType.BLACKOUT;
+        curr.voltageCause = 'BLACKOUT';
+        curr.eventLabel = '🔴 Відключення ДТЕК';
+        curr.eventBadgeColor = '#ef4444';
+        curr.eventBadgeBg = 'rgba(239, 68, 68, 0.15)';
+        curr.eventDescription = 'Стійке відключення електромережі ДТЕК.';
+      }
     }
 
     if (curr.durationMin > config.THRESHOLDS.MIN_OUTAGE_MINUTES) {

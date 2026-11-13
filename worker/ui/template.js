@@ -5,6 +5,58 @@
 
 import { resolveSystemState, SystemStateId } from '../domain/system-state.js';
 
+function getPhaseColor(v) {
+  if (typeof v !== 'number' || Number.isNaN(v)) return '#94a3b8';
+  if (v < 50) return '#ef4444';
+  if (v < 195 || v > 255) return '#ef4444';
+  if (v < 205 || v > 248) return '#f59e0b';
+  return '#10b981';
+}
+
+function buildVoltageBarHTML(gridVoltages, loadVoltages, isGridOn) {
+  if (!gridVoltages || typeof gridVoltages.l1 !== 'number' || typeof gridVoltages.l2 !== 'number' || typeof gridVoltages.l3 !== 'number') {
+    return '';
+  }
+  const phases = [
+    ['L1', gridVoltages.l1],
+    ['L2', gridVoltages.l2],
+    ['L3', gridVoltages.l3]
+  ];
+  const allDead = phases.every(([, v]) => v < 50);
+  const chipsHtml = phases.map(([name, val]) => {
+    const color = getPhaseColor(val);
+    const valStr = val < 5 ? '0' : Math.round(val);
+    return `<div style="background:rgba(15,23,42,0.55); border:1px solid ${color}44; border-radius:10px; padding:6px 8px; text-align:center;">
+      <div style="font-size:0.65rem; color:var(--text-muted);">${name}</div>
+      <div style="font-size:0.95rem; font-weight:700; color:${color};">${valStr} <small style="font-size:0.68rem;">В</small></div>
+    </div>`;
+  }).join('');
+
+  let loadNote = '';
+  if (!isGridOn && loadVoltages && typeof loadVoltages.l1 === 'number' && typeof loadVoltages.l2 === 'number' && typeof loadVoltages.l3 === 'number') {
+    const avgLoadV = Math.round((loadVoltages.l1 + loadVoltages.l2 + loadVoltages.l3) / 3);
+    if (avgLoadV > 100) {
+      loadNote = ` • На будинок: <strong>~${avgLoadV} В</strong>`;
+    }
+  }
+
+  const statusTag = allDead
+    ? `<span style="color:#f87171;">0 В (вимкнено ДТЕК)</span>`
+    : `<span style="color:var(--text-muted);">Норма: 205–248 В (відсічка &lt;195 / &gt;255)</span>`;
+
+  return `
+    <div class="card" style="padding:12px 14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
+        <div style="font-size:0.78rem; font-weight:700; color:var(--text-main);">⚡ Напруга міської мережі (по фазах)</div>
+        <div style="font-size:0.66rem; color:var(--text-muted);">${statusTag}${loadNote}</div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
+        ${chipsHtml}
+      </div>
+    </div>
+  `;
+}
+
 export function renderHTML(data) {
   const state = resolveSystemState(data);
   const isOnline = state.isOnline;
@@ -235,6 +287,8 @@ export function renderHTML(data) {
         </div>
       `}
     </div>
+
+    ${buildVoltageBarHTML(data.grid_voltages, data.load_voltages, data.is_grid_on)}
 
     <!-- OUTAGES STATS & CHARTS SECTION -->
     <div style="margin-top:10px; margin-bottom:12px;">

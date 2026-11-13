@@ -165,16 +165,56 @@ export function resolveSystemState(data, config = {}) {
 
   // 4. Блекаут або захисне відсікання міської мережі (робота будинку від батареї)
   if (!isGridOn) {
-    const isSagPhase = Boolean(currOutage?.isInitialPhase);
-    const title = isSagPhase
-      ? `Резервне живлення • Перевірка мережі ${outageStartStr}`.trim()
-      : `Відключення світла ${outageStartStr}`.trim();
-    const subtitle = isSagPhase
-      ? `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Можливий стрибок напруги або початок відключення`
-      : `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Старт із ${currOutage ? currOutage.startSoc : soc}%`;
-    const tipHtml = isSagPhase
-      ? `<strong>Захист інвертора:</strong> Будинок переведено на резервне живлення від батарей (ліфти, насоси та освітлення працюють стабільно). Найчастіша причина коротких перемикань — захисне відсікання міської мережі через просідання напруги нижче 195 В. Щойно напруга в місті стабілізується вище 205 В протягом 1 хв, система автоматично повернеться на міську мережу.`
-      : `<strong>Порада для мешканців:</strong> Будинок перейшов на резервне живлення від батареї (працюють насоси води, опалення, ліфти та чергове освітлення). Якщо є можливість піднятися сходами на свій поверх — це суттєво заощаджує заряд для безперебійного водопостачання та тепла для всього будинку!`;
+    const gv = data.grid_voltages || currOutage?.lastGridVoltages || null;
+    let voltageCause = currOutage?.voltageCause || null;
+    let livePhaseNote = '';
+
+    if (gv && typeof gv.l1 === 'number' && typeof gv.l2 === 'number' && typeof gv.l3 === 'number') {
+      const phases = [['L1', gv.l1], ['L2', gv.l2], ['L3', gv.l3]];
+      const maxPair = phases.reduce((a, b) => (b[1] > a[1] ? b : a));
+      const minPair = phases.reduce((a, b) => (b[1] < a[1] ? b : a));
+      if (maxPair[1] >= 50) {
+        if (maxPair[1] >= 248 && (voltageCause === 'OVERVOLTAGE' || maxPair[1] >= 252 || minPair[1] >= 205)) {
+          voltageCause = 'OVERVOLTAGE';
+          livePhaseNote = `${maxPair[0]}: ${Math.round(maxPair[1])} В`;
+        } else if (minPair[1] < 205) {
+          voltageCause = 'UNDERVOLTAGE';
+          livePhaseNote = `${minPair[0]}: ${Math.round(minPair[1])} В`;
+        }
+      } else {
+        voltageCause = 'BLACKOUT';
+        livePhaseNote = '0 В у мережі ДТЕК';
+      }
+    }
+
+    const isOvervoltage = voltageCause === 'OVERVOLTAGE';
+    const isUndervoltage = voltageCause === 'UNDERVOLTAGE';
+    const isSagPhase = Boolean(currOutage?.isInitialPhase) && !isOvervoltage && !isUndervoltage && voltageCause !== 'BLACKOUT';
+    const isVoltageProtection = isOvervoltage || isUndervoltage || isSagPhase;
+
+    let title;
+    let subtitle;
+    let tipHtml;
+
+    if (isOvervoltage) {
+      const peakStr = livePhaseNote || (currOutage?.maxPhase && currOutage?.maxGridV ? `${currOutage.maxPhase}: ${Math.round(currOutage.maxGridV)} В` : 'вище 255 В');
+      title = `Захист від перенапруги ${outageStartStr}`.trim();
+      subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}У мережі ${peakStr} (очікує зниження < 248 В)`;
+      tipHtml = `<strong>Захист інвертора від перенапруги:</strong> У міській мережі зафіксовано підвищену напругу (${peakStr}). Інвертор відсік мережу, щоб уберегти ліфти й насоси, та живить будинок стабільними 230 В від батареї. Повернення на мережу відбудеться автоматично через 60 с після зниження всіх фаз нижче 248 В.`;
+    } else if (isUndervoltage) {
+      const lowStr = livePhaseNote || (currOutage?.minPhase && currOutage?.minGridV ? `${currOutage.minPhase}: ${Math.round(currOutage.minGridV)} В` : 'нижче 195 В');
+      title = `Захист від просідання напруги ${outageStartStr}`.trim();
+      subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}У мережі ${lowStr} (очікує підняття > 205 В)`;
+      tipHtml = `<strong>Захист інвертора від просідання:</strong> У міській мережі зафіксовано занижену напругу (${lowStr}). Інвертор відсік мережу та живить будинок стабільними 230 В від батареї. Повернення відбудеться автоматично через 60 с після підняття напруги вище 205 В.`;
+    } else if (isSagPhase) {
+      title = `Резервне живлення • Перевірка мережі ${outageStartStr}`.trim();
+      subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Можливий стрибок напруги або початок відключення`;
+      tipHtml = `<strong>Захист інвертора:</strong> Будинок переведено на резервне живлення від батарей (ліфти, насоси та освітлення працюють стабільно). Найчастіша причина коротких перемикань — вихід напруги за межі 195–255 В. Щойно напруга повернеться в коридор 205–248 В на 60 с, система автоматично перейде на міську мережу.`;
+    } else {
+      title = `Відключення світла ${outageStartStr}`.trim();
+      subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}${livePhaseNote ? `${livePhaseNote} • ` : ''}Старт із ${currOutage ? currOutage.startSoc : soc}%`;
+      tipHtml = `<strong>Порада для мешканців:</strong> Будинок перейшов на резервне живлення від батареї (працюють насоси води, опалення, ліфти та чергове освітлення). Якщо є можливість піднятися сходами на свій поверх — це суттєво заощаджує заряд для безперебійного водопостачання та тепла для всього будинку!`;
+    }
 
     return new SystemState({
       id: SystemStateId.BLACKOUT_BATTERY,
@@ -184,15 +224,15 @@ export function resolveSystemState(data, config = {}) {
       badgeBg: 'rgba(16, 185, 129, 0.15)',
       badgeBorder: 'rgba(16, 185, 129, 0.3)',
       dotColor: '#10b981',
-      bannerIcon: isSagPhase ? '⚡' : '🔴',
-      bannerBorderColor: isSagPhase ? '#f59e0b' : 'var(--danger)',
-      bannerIconBg: isSagPhase ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-      bannerIconColor: isSagPhase ? '#f59e0b' : 'var(--danger)',
+      bannerIcon: isVoltageProtection ? '⚡' : '🔴',
+      bannerBorderColor: isVoltageProtection ? '#f59e0b' : 'var(--danger)',
+      bannerIconBg: isVoltageProtection ? 'rgba(245, 158, 11, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+      bannerIconColor: isVoltageProtection ? '#f59e0b' : 'var(--danger)',
       bannerTitle: title,
       bannerSubtitle: subtitle,
-      gaugeSubtext: isSagPhase ? '⚡ Захист АКБ' : '🔴 Розряд АКБ',
+      gaugeSubtext: isVoltageProtection ? '⚡ Захист АКБ' : '🔴 Розряд АКБ',
       gaugeStrokeColor: soc > 50 ? '#3b82f6' : (soc > 25 ? '#f59e0b' : '#ef4444'),
-      tipIcon: isSagPhase ? '⚡' : '💡',
+      tipIcon: isVoltageProtection ? '⚡' : '💡',
       tipBg: 'rgba(245, 158, 11, 0.08)',
       tipBorder: 'rgba(245, 158, 11, 0.2)',
       tipColor: '#fef3c7',
