@@ -90,6 +90,49 @@ describe('Domain: Autonomy & Outage Detection (DRY / SRP)', () => {
     assert.equal(stats.statActiveKw, 6.0, 'Should use heating season points (6.0 kW), ignoring pre-heating points (2.0 kW)');
   });
 
+  test('calculateOutageStatistics ignores VOLTAGE_SAG events and averages only BLACKOUT intervals', () => {
+    const dayStartSec = 1794567600; // 2026-11-13 ~12:00 Kyiv (daytime)
+    const records = [
+      // Event 1: Overvoltage protection lasting 35 min with low load (4.0 kW)
+      { dateTime: dayStartSec, wirePower: 5000, batteryPower: 0, usePower: 4000, batterySoc: 100, v1: 240, v2: 256, v3: 241 },
+      ...Array.from({ length: 7 }, (_, i) => ({
+        dateTime: dayStartSec + (i + 1) * 300,
+        wirePower: 0,
+        batteryPower: 4000,
+        usePower: 4000,
+        batterySoc: 100,
+        v1: 240,
+        v2: 257,
+        v3: 241
+      })),
+      { dateTime: dayStartSec + 8 * 300, wirePower: 5000, batteryPower: 0, usePower: 4000, batterySoc: 98, v1: 238, v2: 245, v3: 239 },
+      // Event 2: Real 0V DTEK Blackout with 3+ points at 8.0 kW
+      { dateTime: dayStartSec + 10 * 300, wirePower: 0, batteryPower: 8000, usePower: 8000, batterySoc: 98, v1: 0, v2: 0, v3: 0 },
+      { dateTime: dayStartSec + 11 * 300, wirePower: 0, batteryPower: 8000, usePower: 8000, batterySoc: 96, v1: 0, v2: 0, v3: 0 },
+      { dateTime: dayStartSec + 12 * 300, wirePower: 0, batteryPower: 8000, usePower: 8000, batterySoc: 94, v1: 0, v2: 0, v3: 0 },
+      { dateTime: dayStartSec + 13 * 300, wirePower: 5000, batteryPower: -2000, usePower: 4000, batterySoc: 94, v1: 230, v2: 232, v3: 231 }
+    ];
+
+    const stats = calculateOutageStatistics(records, CONFIG);
+    assert.equal(stats.statActiveKw, 8.0, 'Must use only 0V BLACKOUT points (8.0 kW), ignoring 4.0 kW VOLTAGE_SAG');
+    // Only daytime blackout points exist (< 3 night blackout points) => fallback directly to DEFAULT_NIGHT_KW constant
+    assert.equal(stats.statNightKw, CONFIG.THRESHOLDS.DEFAULT_NIGHT_KW, 'Must fall back directly to DEFAULT_NIGHT_KW constant');
+  });
+
+  test('calculateOutageStatistics falls back directly to DEFAULT constants when BLACKOUT points < 3', () => {
+    const t0 = 1794567600;
+    const records = [
+      // Only grid-on night/day points + short voltage sag (no 0V blackout with >= 3 points)
+      { dateTime: t0, wirePower: 5000, batteryPower: 0, usePower: 3200, batterySoc: 100, v1: 235, v2: 240, v3: 236 },
+      { dateTime: t0 + 300, wirePower: 0, batteryPower: 4200, usePower: 4200, batterySoc: 100, v1: 240, v2: 256, v3: 241 },
+      { dateTime: t0 + 600, wirePower: 5000, batteryPower: 0, usePower: 3100, batterySoc: 99, v1: 234, v2: 242, v3: 236 }
+    ];
+
+    const stats = calculateOutageStatistics(records, CONFIG);
+    assert.equal(stats.statActiveKw, CONFIG.THRESHOLDS.DEFAULT_ACTIVE_KW);
+    assert.equal(stats.statNightKw, CONFIG.THRESHOLDS.DEFAULT_NIGHT_KW);
+  });
+
   test('simulateTimelineAutonomy calculates realistic day/night combined transition', () => {
     // 49.725 kWh usable energy, starts at 14:00 (Kyiv hour 14)
     // 14:00 to 23:00 = 9h day @ 3.3 kW = 29.7 kWh

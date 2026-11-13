@@ -322,10 +322,18 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
 }
 
 /**
- * Розрахунок середнього денного та нічного навантаження будинку за історією відключень.
+ * Розрахунок середнього денного та нічного навантаження будинку виключно по інтервалах блекаутів ДТЕК (BLACKOUT).
+ * Якщо достатньої кількості точок BLACKOUT немає (< 3), повертаються базові константи DEFAULT_ACTIVE_KW / DEFAULT_NIGHT_KW.
  */
-export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG) {
+export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG, outageJournal = null) {
   const { DEFAULT_ACTIVE_KW, DEFAULT_NIGHT_KW, NIGHT_HOUR_START, NIGHT_HOUR_END, HEATING_SEASON_START } = config.THRESHOLDS;
+
+  if (!Array.isArray(multiDayRecords) || multiDayRecords.length === 0) {
+    return {
+      statActiveKw: Math.round(DEFAULT_ACTIVE_KW * 10) / 10,
+      statNightKw: Math.round(DEFAULT_NIGHT_KW * 10) / 10
+    };
+  }
 
   let heatingCutoffSec = 0;
   if (HEATING_SEASON_START) {
@@ -333,18 +341,41 @@ export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG)
     heatingCutoffSec = Math.floor(heatingDate.getTime() / 1000) - getKyivOffsetSec(heatingDate);
   }
 
-  const allOutagePoints = multiDayRecords.filter(r => isOutageRecord(r, config));
-  const heatingOutagePoints = heatingCutoffSec > 0
-    ? allOutagePoints.filter(r => r.dateTime >= heatingCutoffSec)
-    : allOutagePoints;
+  const lastTs = multiDayRecords[multiDayRecords.length - 1]?.dateTime;
+  const journal = outageJournal || analyzeMultiDayOutages(
+    multiDayRecords,
+    typeof lastTs === 'number' ? lastTs + 300 : nowUtcSec(),
+    config
+  );
 
-  // Використовуємо точки періоду опалення, якщо їх достатньо (від 3 точок), інакше загальні
-  const outagePoints = heatingOutagePoints.length >= 3 ? heatingOutagePoints : allOutagePoints;
+  // Збираємо індекси виключно тих точок, що належать до реальних блекаутів ДТЕК (OutageType.BLACKOUT)
+  const blackoutIndices = new Set();
+  for (const ev of (journal.events || [])) {
+    if (ev.eventType !== OutageType.BLACKOUT) continue;
+    const startIdx = Math.max(0, ev.startIndex ?? 0);
+    const endIdx = Math.min(multiDayRecords.length - 1, ev.endIndex ?? (multiDayRecords.length - 1));
+    for (let i = startIdx; i <= endIdx; i++) {
+      if (isOutageRecord(multiDayRecords[i], config)) {
+        blackoutIndices.add(i);
+      }
+    }
+  }
+
+  const allBlackoutPoints = Array.from(blackoutIndices)
+    .sort((a, b) => a - b)
+    .map(i => multiDayRecords[i]);
+
+  const heatingBlackoutPoints = heatingCutoffSec > 0
+    ? allBlackoutPoints.filter(r => r.dateTime >= heatingCutoffSec)
+    : allBlackoutPoints;
+
+  // Використовуємо точки періоду опалення, якщо їх достатньо (від 3 точок), інакше всі точки BLACKOUT
+  const blackoutPoints = heatingBlackoutPoints.length >= 3 ? heatingBlackoutPoints : allBlackoutPoints;
 
   const dayOutageKws = [];
   const nightOutageKws = [];
 
-  for (const r of outagePoints) {
+  for (const r of blackoutPoints) {
     const hour = getKyivHour(r.dateTime);
     const kw = Math.max(0, (r.usePower || r.dischargePower || r.batteryPower || 0) / 1000.0);
     if (hour >= NIGHT_HOUR_START || hour < NIGHT_HOUR_END) {
@@ -354,32 +385,16 @@ export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG)
     }
   }
 
-  // Денне навантаження під час реальних блекаутів
-  const statActiveKwVal = dayOutageKws.length >= 3 
-    ? (dayOutageKws.reduce((a, b) => a + b, 0) / dayOutageKws.length) 
+  // Денне навантаження під час реальних блекаутів ДТЕК (фолбек — константа DEFAULT_ACTIVE_KW)
+  const statActiveKwVal = dayOutageKws.length >= 3
+    ? (dayOutageKws.reduce((a, b) => a + b, 0) / dayOutageKws.length)
     : DEFAULT_ACTIVE_KW;
   const statActiveKw = Math.round(statActiveKwVal * 10) / 10;
 
-  // Нічне навантаження (якщо блекаутів вночі не було — беремо нічне базове споживання будинку)
-  let statNightKwVal;
-  if (nightOutageKws.length >= 3) {
-    statNightKwVal = (nightOutageKws.reduce((a, b) => a + b, 0) / nightOutageKws.length);
-  } else {
-    const recordsForBase = heatingCutoffSec > 0
-      ? multiDayRecords.filter(r => r.dateTime >= heatingCutoffSec)
-      : multiDayRecords;
-    const nightBaseKws = [];
-    for (const r of (recordsForBase.length >= 24 ? recordsForBase : multiDayRecords)) {
-      const hour = getKyivHour(r.dateTime);
-      const kw = (r.usePower || 0) / 1000.0;
-      if (kw > 0.3 && (hour >= NIGHT_HOUR_START || hour < NIGHT_HOUR_END)) {
-        nightBaseKws.push(kw);
-      }
-    }
-    statNightKwVal = nightBaseKws.length > 0 
-      ? (nightBaseKws.reduce((a, b) => a + b, 0) / nightBaseKws.length) * 1.10
-      : DEFAULT_NIGHT_KW;
-  }
+  // Нічне навантаження під час реальних блекаутів ДТЕК (фолбек — константа DEFAULT_NIGHT_KW)
+  const statNightKwVal = nightOutageKws.length >= 3
+    ? (nightOutageKws.reduce((a, b) => a + b, 0) / nightOutageKws.length)
+    : DEFAULT_NIGHT_KW;
   const statNightKw = Math.round(statNightKwVal * 10) / 10;
 
   return {
