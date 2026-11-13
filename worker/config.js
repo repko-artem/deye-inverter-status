@@ -67,6 +67,7 @@ export const CONFIG = {
   CACHE: {
     TTL_MS: 60 * 1000,               // TTL кешу телеметрії (60 сек)
     SWR_MAX_AGE_MS: 5 * 60 * 1000,   // Макс. вік снепшоту для миттєвої видачі (Stale-While-Revalidate, 5 хв)
+    SNAPSHOT_KV_INTERVAL_MS: 20 * 60 * 1000, // Мін. інтервал запису telemetry_snapshot у KV (20 хв -> <= 72 записів/добу, ліміт Free: 1000/добу)
     HISTORY_DAYS: 7,                 // Глибина історії відключень (днів)
     HISTORY_CONCURRENCY: 3           // Макс. паралельних запитів історії (щоб не перевищувати ліміт 6 з'єднань CF)
   }

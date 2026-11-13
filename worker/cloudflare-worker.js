@@ -40,6 +40,7 @@ async function getCachedTelemetry(env, ctx, isBypass = false) {
     if (!recent && env && env.NOTIFY_KV) {
       try {
         const snap = await env.NOTIFY_KV.get('telemetry_snapshot', { type: 'json' });
+        globalCache.setKvSnapshotMeta(snap?.timestamp || 0, snap?.data?.system_state || null);
         if (snap && snap.data && snap.timestamp) {
           globalCache.setRecent(snap.data, snap.timestamp);
           const ageMs = Date.now() - snap.timestamp;

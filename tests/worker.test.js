@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy, getFreshTelemetry, globalCache } from '../worker/cloudflare-worker.js';
+import worker, { CONFIG, analyzeMultiDayOutages, buildOutageChart, renderHTML, calculateAutonomy, getFreshTelemetry, globalCache } from '../worker/cloudflare-worker.js';
 import { compactHistoryRecord, getPastDaysList, mergeDeviceVoltagesIntoRecords } from '../worker/services/telemetry-service.js';
 import { classifyOutageEvent } from '../worker/domain/outages.js';
 
@@ -634,9 +634,12 @@ describe('Full Telemetry Flow (getFreshTelemetry)', () => {
 
 function createMockKV(initial = {}) {
   const store = new Map(Object.entries(initial));
+  const calls = [];
   return {
     store,
+    calls,
     async get(key, opts) {
+      calls.push({ op: 'get', key });
       const val = store.get(key);
       if (val === undefined) return null;
       if (opts && opts.type === 'json') {
@@ -645,6 +648,7 @@ function createMockKV(initial = {}) {
       return val;
     },
     async put(key, val) {
+      calls.push({ op: 'put', key });
       store.set(key, typeof val === 'string' ? val : JSON.stringify(val));
     }
   };
@@ -957,6 +961,87 @@ describe('Worker Performance Optimization (KV Caching, SWR & HEAD Requests)', ()
       ]);
     } finally {
       globalThis.caches = originalCaches;
+      globalCache.clear();
+    }
+  });
+
+  test('throttles telemetry_snapshot KV writes within SNAPSHOT_KV_INTERVAL_MS unless system_state transitions', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const historyDays = getPastDaysList(nowSec, CONFIG.CACHE.HISTORY_DAYS);
+      const preCachedPast = {};
+      for (const pd of historyDays) {
+        preCachedPast[pd.key] = [{ dateTime: nowSec - 86400, wirePower: 5000, batteryPower: 0, usePower: 2500, batterySoc: 100 }];
+      }
+
+      const kv = createMockKV({
+        history_past_days: JSON.stringify(preCachedPast),
+        telemetry_snapshot: JSON.stringify({
+          timestamp: Date.now() - 2 * 60 * 1000, // Only 2 min ago (< 20m interval)
+          data: { system_state: 'GRID_STANDBY' }
+        })
+      });
+
+      let gridOnMode = true;
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify(gridOnMode ? {
+              batterySoc: 100,
+              batteryBv: 652.0,
+              gridRelayStatus: 'on',
+              wirePower: 4500,
+              batteryPower: 0,
+              usePower: 4000,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: Math.floor(Date.now() / 1000)
+            } : {
+              batterySoc: 98,
+              batteryBv: 645.0,
+              gridRelayStatus: 'off',
+              wirePower: 0,
+              batteryPower: 7500,
+              usePower: 7500,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: Math.floor(Date.now() / 1000)
+            })
+          };
+        }
+        return { ok: true, status: 200, text: async () => JSON.stringify({ records: [] }) };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_API_BASE: 'https://mock.deye.com',
+        NOTIFY_KV: kv
+      };
+
+      // 1. Steady-state GRID_ON within 20m -> must SKIP telemetry_snapshot kv.put
+      await getFreshTelemetry(env);
+      let snapshotWrites = kv.calls.filter(c => c.op === 'put' && c.key === 'telemetry_snapshot').length;
+      assert.equal(snapshotWrites, 0, 'Must skip KV snapshot write within SNAPSHOT_KV_INTERVAL_MS when state unchanged');
+
+      // 2. Repeated poll on warm isolate -> still skips KV write AND skips extra KV read
+      const readsBefore = kv.calls.filter(c => c.op === 'get' && c.key === 'telemetry_snapshot').length;
+      await getFreshTelemetry(env);
+      const readsAfter = kv.calls.filter(c => c.op === 'get' && c.key === 'telemetry_snapshot').length;
+      snapshotWrites = kv.calls.filter(c => c.op === 'put' && c.key === 'telemetry_snapshot').length;
+      assert.equal(snapshotWrites, 0, 'Repeated warm poll must still skip KV snapshot write');
+      assert.equal(readsAfter, readsBefore, 'Warm isolate must not re-read telemetry_snapshot from KV');
+
+      // 3. State transition GRID_ON -> OUTAGE -> must write telemetry_snapshot immediately
+      gridOnMode = false;
+      await getFreshTelemetry(env);
+      snapshotWrites = kv.calls.filter(c => c.op === 'put' && c.key === 'telemetry_snapshot').length;
+      assert.equal(snapshotWrites, 1, 'Must immediately persist telemetry_snapshot on system_state transition');
+    } finally {
+      globalThis.fetch = originalFetch;
       globalCache.clear();
     }
   });

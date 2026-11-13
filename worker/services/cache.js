@@ -12,6 +12,7 @@ export class TelemetryCache {
     this.inMemoryTimestamp = 0;
     this.ongoingFetchPromise = null;
     this.cachedDayRecords = {};
+    this.kvSnapshotMeta = null;
   }
 
   clear() {
@@ -19,6 +20,18 @@ export class TelemetryCache {
     this.inMemoryTimestamp = 0;
     this.ongoingFetchPromise = null;
     this.cachedDayRecords = {};
+    this.kvSnapshotMeta = null;
+  }
+
+  getKvSnapshotMeta() {
+    return this.kvSnapshotMeta;
+  }
+
+  setKvSnapshotMeta(timestamp, systemState = null) {
+    this.kvSnapshotMeta = {
+      timestamp: typeof timestamp === 'number' ? timestamp : 0,
+      systemState: systemState || null
+    };
   }
 
   isFresh(now = Date.now()) {

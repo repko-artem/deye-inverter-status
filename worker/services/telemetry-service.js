@@ -452,7 +452,22 @@ export class TelemetryService {
       this.cache.setRecent(rawResult, snapshotTs);
       if (kv) {
         try {
-          await kv.put('telemetry_snapshot', JSON.stringify({ timestamp: snapshotTs, data: rawResult }));
+          let kvMeta = this.cache.getKvSnapshotMeta();
+          if (kvMeta === null) {
+            const existingSnap = await kv.get('telemetry_snapshot', { type: 'json' });
+            this.cache.setKvSnapshotMeta(existingSnap?.timestamp || 0, existingSnap?.data?.system_state || null);
+            kvMeta = this.cache.getKvSnapshotMeta();
+          }
+
+          const minIntervalMs = this.config.CACHE?.SNAPSHOT_KV_INTERVAL_MS ?? (20 * 60 * 1000);
+          const elapsedMs = snapshotTs - (kvMeta?.timestamp || 0);
+          const stateChanged = Boolean(kvMeta?.systemState && kvMeta.systemState !== rawResult.system_state);
+          const shouldWriteSnapshot = !kvMeta?.timestamp || elapsedMs >= minIntervalMs || stateChanged;
+
+          if (shouldWriteSnapshot) {
+            await kv.put('telemetry_snapshot', JSON.stringify({ timestamp: snapshotTs, data: rawResult }));
+            this.cache.setKvSnapshotMeta(snapshotTs, rawResult.system_state);
+          }
         } catch (err) {
           console.error('Failed to save telemetry_snapshot to KV:', err);
         }
