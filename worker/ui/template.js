@@ -57,13 +57,113 @@ function buildVoltageBarHTML(gridVoltages, loadVoltages, isGridOn) {
   `;
 }
 
+function renderOutageCardHTML(outage, gradId) {
+  return `
+      <div class="card">
+        <!-- Outage Title & Duration -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="width:9px; height:9px; border-radius:50%; background:${outage.isOngoing ? '#ef4444' : (outage.eventType === 'VOLTAGE_SAG' ? '#f59e0b' : '#64748b')}; box-shadow:${outage.isOngoing ? '0 0 8px #ef4444' : 'none'};"></span>
+            <strong style="font-size:0.88rem; color:var(--text-main);">
+              ${outage.isOngoing ? `Триває зараз: ${outage.dayLabel && outage.dayLabel !== 'Сьогодні' ? `<span style="color:#94a3b8; font-weight:500;">${outage.dayLabel},</span> ` : ''}з ${outage.start}` : `Відключення: ${outage.dayLabel ? `<span style="color:#94a3b8; font-weight:500;">${outage.dayLabel},</span> ` : ''}${outage.start} — ${outage.end}`}
+            </strong>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            ${outage.eventLabel ? `
+              <div style="font-size:0.68rem; color:${outage.eventBadgeColor || '#f59e0b'}; font-weight:600; background:${outage.eventBadgeBg || 'rgba(245,158,11,0.12)'}; padding:2px 7px; border-radius:6px;">
+                ${outage.eventLabel}
+              </div>
+            ` : ''}
+            <div style="font-size:0.72rem; color:#60a5fa; font-weight:700; background:rgba(59,130,246,0.12); padding:3px 8px; border-radius:8px;">
+              ⏳ ${outage.durStr}
+            </div>
+          </div>
+        </div>
+
+        <!-- Outage Stats: Peak & Average -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:12px;">
+          <div class="journal-badge">
+            <div class="jb-val" style="color:#f59e0b;">${outage.peakKw} <small style="font-size:0.65rem">кВт</small></div>
+            <div class="jb-lbl">⚡ Пік (${outage.peakTime})</div>
+          </div>
+          <div class="journal-badge">
+            <div class="jb-val" style="color:#60a5fa;">${outage.avgKw} <small style="font-size:0.65rem">кВт</small></div>
+            <div class="jb-lbl">📊 Сер. навантаження</div>
+          </div>
+          <div class="journal-badge">
+            <div class="jb-val" style="color:#34d399;">${outage.socDrain > 0 ? `${outage.startSoc}% ➔ ${outage.minSoc}%` : `~${outage.energyKwh} кВт·год`}</div>
+            <div class="jb-lbl">${outage.socDrain > 0 ? `🔋 Розряд (-${outage.socDrain}%)` : `🔋 Витрачено (~${outage.energyKwh} кВт·год)`}</div>
+          </div>
+        </div>
+
+        <!-- Zoomed SVG Chart -->
+        <div style="width: 100%; overflow: hidden;">
+          <svg viewBox="0 0 520 175" style="width:100%; height:auto; display:block;">
+            <defs>
+              <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.35"/>
+                <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.0"/>
+              </linearGradient>
+            </defs>
+
+            <!-- Grid Lines -->
+            <line x1="35" y1="22" x2="505" y2="22" stroke="rgba(255,255,255,0.06)" stroke-dasharray="3 3"/>
+            <text x="30" y="26" fill="#94a3b8" font-size="8.5" text-anchor="end">${outage.maxKw}кВт</text>
+
+            <line x1="35" y1="${Math.round((22 + 145)/2)}" x2="505" y2="${Math.round((22 + 145)/2)}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="3 3"/>
+            <text x="30" y="${Math.round((22 + 145)/2) + 3}" fill="#94a3b8" font-size="8.5" text-anchor="end">${outage.midKw}кВт</text>
+
+            <line x1="35" y1="145" x2="505" y2="145" stroke="rgba(255,255,255,0.12)"/>
+            <text x="30" y="148" fill="#94a3b8" font-size="8.5" text-anchor="end">0</text>
+
+            <!-- Average Dashed Line -->
+            <line x1="35" y1="${outage.yAvg}" x2="505" y2="${outage.yAvg}" stroke="#f59e0b" stroke-dasharray="4 3" stroke-width="1.2" opacity="0.8"/>
+            <text x="502" y="${Math.max(16, outage.yAvg - 4)}" fill="#f59e0b" font-size="8" font-weight="700" text-anchor="end">Сер: ${outage.avgKw} кВт</text>
+
+            <!-- Area fill -->
+            <path d="${outage.areaD}" fill="url(#${gradId})" />
+
+            <!-- Power Curve -->
+            <path d="${outage.pathD}" fill="none" stroke="#3b82f6" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+
+            <!-- Battery SOC Line -->
+            <path d="${outage.socD}" fill="none" stroke="#10b981" stroke-width="1.8" stroke-dasharray="3 3"/>
+
+            <!-- Peak Badge -->
+            <circle cx="${outage.peakX}" cy="${outage.peakY}" r="3.5" fill="#f59e0b" stroke="#fff" stroke-width="1.5"/>
+            <rect x="${outage.peakX - 22}" y="${Math.max(5, outage.peakY - 17)}" width="44" height="13" rx="3" fill="rgba(15, 23, 42, 0.88)" stroke="rgba(245, 158, 11, 0.4)" stroke-width="0.8"/>
+            <text x="${outage.peakX}" y="${Math.max(14, outage.peakY - 8)}" fill="#f59e0b" font-size="8.5" font-weight="700" text-anchor="middle">${outage.peakKw} кВт</text>
+
+            <!-- Timestamps -->
+            ${outage.labelsSvg}
+          </svg>
+        </div>
+
+        <!-- Legend -->
+        <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:0.68rem; color:#94a3b8; border-top:1px solid rgba(255,255,255,0.06); padding-top:6px;">
+          <span style="display:flex; align-items:center; gap:4px;"><span style="width:10px; height:2px; background:#3b82f6; display:inline-block;"></span> Споживання (кВт)</span>
+          <span style="display:flex; align-items:center; gap:4px;"><span style="width:10px; height:2px; background:#f59e0b; border-top:1px dashed #f59e0b; display:inline-block;"></span> Сер.: ${outage.avgKw} кВт</span>
+          <span style="display:flex; align-items:center; gap:4px;"><span style="width:10px; height:2px; background:#10b981; border-top:1px dashed #10b981; display:inline-block;"></span> АКБ: ${outage.socDrain > 0 ? `${outage.startSoc}% ➔ ${outage.minSoc}%` : `100% (~${outage.energyKwh} кВт·год)`}</span>
+        </div>
+      </div>`;
+}
+
 export function renderHTML(data) {
   const state = resolveSystemState(data);
   const isOnline = state.isOnline;
   const soc = data.battery_soc ?? 0;
   const strokeColor = state.gaugeStrokeColor;
   const offset = 502 - (soc / 100) * 502;
-  const outages = data.outages || [];
+  const rawOutages = data.outages || [];
+  const ongoingChart = data.ongoing_outage_chart !== undefined
+    ? data.ongoing_outage_chart
+    : (rawOutages.find(o => o && o.isOngoing) || null);
+  const blackoutCharts = Array.isArray(data.blackout_outages)
+    ? data.blackout_outages
+    : rawOutages.filter(o => o && !o.isOngoing && o.eventType !== 'VOLTAGE_SAG').slice(0, 3);
+  const voltageCharts = Array.isArray(data.voltage_outages)
+    ? data.voltage_outages
+    : rawOutages.filter(o => o && !o.isOngoing && o.eventType === 'VOLTAGE_SAG').slice(0, 3);
   const journal = data.journal || { count: 0, totalHoursFormatted: "0 хв", minSoc: 100 };
   const currOutage = data.current_outage;
   const outageStartStr = currOutage ? (currOutage.dayLabel && currOutage.dayLabel !== 'Сьогодні' ? `(з ${currOutage.dayLabel} ${currOutage.start})` : `(з ${currOutage.start})`) : '';
@@ -138,6 +238,13 @@ export function renderHTML(data) {
     .journal-badge { background: rgba(15,23,42,0.5); border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 8px 6px; text-align: center; }
     .jb-val { font-size: 1rem; font-weight: 700; color: #f8fafc; }
     .jb-lbl { font-size: 0.65rem; color: var(--text-muted); }
+
+    .journal-tab { width: 100%; text-align: left; font-family: inherit; color: inherit; background: rgba(15,23,42,0.55); border-radius: 12px; padding: 9px 11px; cursor: pointer; transition: all 0.18s ease; }
+    .journal-tab-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .journal-tab-dot { width: 9px; height: 9px; border-radius: 50%; background: #475569; flex-shrink: 0; transition: all 0.18s ease; }
+    .journal-tab-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 3px; font-size: 0.65rem; color: var(--text-muted); }
+    .journal-panel { display: flex; flex-direction: column; gap: 14px; }
+    .journal-panel.is-hidden { display: none; }
 
     .event-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: rgba(15,23,42,0.4); border-radius: 10px; font-size: 0.78rem; margin-bottom: 6px; }
     .event-left { display: flex; align-items: center; gap: 8px; }
@@ -301,131 +408,65 @@ export function renderHTML(data) {
         </div>
       </div>
 
-      <!-- Лічильники: Блекаути vs Захист від напруги (ЗАВЖДИ ВИДИМІ) -->
+      <!-- Перемикач журналу: Блекаути ДТЕК (за замовч.) vs Захист від напруги -->
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
-        <div style="background:var(--bg-metric); border:1px solid rgba(239,68,68,0.25); border-radius:10px; padding:8px 10px;">
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span style="font-size:1rem;">🔴</span>
-            <strong style="font-size:0.83rem; color:var(--text-main);">Блекаути ДТЕК</strong>
+        <button id="tab-blackout" type="button" onclick="selectJournalTab('blackout')" aria-pressed="true" class="journal-tab" style="background:rgba(239,68,68,0.12); border:1.5px solid rgba(239,68,68,0.65); box-shadow:0 0 0 1px rgba(239,68,68,0.2);">
+          <div class="journal-tab-head">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="font-size:1rem;">🔴</span>
+              <strong style="font-size:0.82rem; color:var(--text-main);">Блекаути ДТЕК</strong>
+            </div>
+            <span id="dot-blackout" class="journal-tab-dot" style="background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,0.25);"></span>
           </div>
-          <div style="font-size:1rem; font-weight:700; color:#f87171; margin-top:3px;">
+          <div style="font-size:1rem; font-weight:700; color:#f87171; margin-top:4px;">
             ${journal.blackoutCount24h || 0} <small style="font-size:0.68rem; font-weight:500; color:var(--text-muted);">(за 24 год)</small>
           </div>
-          <div style="font-size:0.65rem; color:var(--text-muted); margin-top:2px;">
-            Всього за тиждень: <strong>${journal.blackoutCountTotal || 0}</strong>
+          <div class="journal-tab-foot">
+            <span>За тиждень: <strong>${journal.blackoutCountTotal || 0}</strong></span>
+            <span id="state-blackout" style="color:#fca5a5; font-weight:600;">Показано ▾</span>
           </div>
-        </div>
+        </button>
 
-        <div style="background:var(--bg-metric); border:1px solid rgba(245,158,11,0.25); border-radius:10px; padding:8px 10px;">
-          <div style="display:flex; align-items:center; gap:6px;">
-            <span style="font-size:1rem;">⚡</span>
-            <strong style="font-size:0.83rem; color:var(--text-main);">Захист від напруги</strong>
+        <button id="tab-voltage" type="button" onclick="selectJournalTab('voltage')" aria-pressed="false" class="journal-tab" style="background:rgba(15,23,42,0.55); border:1px solid rgba(245,158,11,0.25);">
+          <div class="journal-tab-head">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span style="font-size:1rem;">⚡</span>
+              <strong style="font-size:0.82rem; color:var(--text-main);">Захист напруги</strong>
+            </div>
+            <span id="dot-voltage" class="journal-tab-dot"></span>
           </div>
-          <div style="font-size:1rem; font-weight:700; color:#f59e0b; margin-top:3px;">
+          <div style="font-size:1rem; font-weight:700; color:#f59e0b; margin-top:4px;">
             ${journal.voltageSagCount24h || 0} <small style="font-size:0.68rem; font-weight:500; color:var(--text-muted);">(за 24 год)</small>
           </div>
-          <div style="font-size:0.65rem; color:var(--text-muted); margin-top:2px;">
-            Всього за тиждень: <strong>${journal.voltageSagCountTotal || 0}</strong> спрацювань
+          <div class="journal-tab-foot">
+            <span>За тиждень: <strong>${journal.voltageSagCountTotal || 0}</strong></span>
+            <span id="state-voltage" style="color:var(--text-muted);">Графіки ▸</span>
           </div>
-        </div>
+        </button>
       </div>
     </div>
 
-    ${outages.length === 0 ? `
-      <div class="card" style="text-align:center; padding:24px 16px;">
-        <div style="font-size:1.8rem; margin-bottom:6px;">🟢</div>
-        <div style="font-size:0.92rem; font-weight:700; color:var(--text-main);">Зафіксованих відключень поки немає</div>
-        <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Будинок безперервно живиться від міської електромережі.</div>
-      </div>
-    ` : outages.map((outage, idx) => `
-      <div class="card">
-        <!-- Outage Title & Duration -->
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:6px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <span style="width:9px; height:9px; border-radius:50%; background:${outage.isOngoing ? '#ef4444' : (outage.eventType === 'VOLTAGE_SAG' ? '#f59e0b' : '#64748b')}; box-shadow:${outage.isOngoing ? '0 0 8px #ef4444' : 'none'};"></span>
-            <strong style="font-size:0.88rem; color:var(--text-main);">
-              ${outage.isOngoing ? `Триває зараз: ${outage.dayLabel && outage.dayLabel !== 'Сьогодні' ? `<span style="color:#94a3b8; font-weight:500;">${outage.dayLabel},</span> ` : ''}з ${outage.start}` : `Відключення: ${outage.dayLabel ? `<span style="color:#94a3b8; font-weight:500;">${outage.dayLabel},</span> ` : ''}${outage.start} — ${outage.end}`}
-            </strong>
-          </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            ${outage.eventLabel ? `
-              <div style="font-size:0.68rem; color:${outage.eventBadgeColor || '#f59e0b'}; font-weight:600; background:${outage.eventBadgeBg || 'rgba(245,158,11,0.12)'}; padding:2px 7px; border-radius:6px;">
-                ${outage.eventLabel}
-              </div>
-            ` : ''}
-            <div style="font-size:0.72rem; color:#60a5fa; font-weight:700; background:rgba(59,130,246,0.12); padding:3px 8px; border-radius:8px;">
-              ⏳ ${outage.durStr}
-            </div>
-          </div>
+    ${ongoingChart ? renderOutageCardHTML(ongoingChart, 'outageGrad_ongoing') : ''}
+
+    <div id="panel-blackout" class="journal-panel">
+      ${blackoutCharts.length === 0 ? `
+        <div class="card" style="text-align:center; padding:24px 16px;">
+          <div style="font-size:1.8rem; margin-bottom:6px;">🟢</div>
+          <div style="font-size:0.92rem; font-weight:700; color:var(--text-main);">Зафіксованих відключень ДТЕК поки немає</div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">За останній тиждень тривалих блекаутів ДТЕК не було.</div>
         </div>
+      ` : blackoutCharts.map((outage, idx) => renderOutageCardHTML(outage, `outageGrad_b_${idx}`)).join('')}
+    </div>
 
-        <!-- Outage Stats: Peak & Average -->
-        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:12px;">
-          <div class="journal-badge">
-            <div class="jb-val" style="color:#f59e0b;">${outage.peakKw} <small style="font-size:0.65rem">кВт</small></div>
-            <div class="jb-lbl">⚡ Пік (${outage.peakTime})</div>
-          </div>
-          <div class="journal-badge">
-            <div class="jb-val" style="color:#60a5fa;">${outage.avgKw} <small style="font-size:0.65rem">кВт</small></div>
-            <div class="jb-lbl">📊 Сер. навантаження</div>
-          </div>
-          <div class="journal-badge">
-            <div class="jb-val" style="color:#34d399;">${outage.socDrain > 0 ? `${outage.startSoc}% ➔ ${outage.minSoc}%` : `~${outage.energyKwh} кВт·год`}</div>
-            <div class="jb-lbl">${outage.socDrain > 0 ? `🔋 Розряд (-${outage.socDrain}%)` : `🔋 Витрачено (~${outage.energyKwh} кВт·год)`}</div>
-          </div>
+    <div id="panel-voltage" class="journal-panel is-hidden">
+      ${voltageCharts.length === 0 ? `
+        <div class="card" style="text-align:center; padding:24px 16px;">
+          <div style="font-size:1.8rem; margin-bottom:6px;">🟢</div>
+          <div style="font-size:0.92rem; font-weight:700; color:var(--text-main);">Спрацювань захисту по напрузі поки немає</div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Напруга міської мережі трималась у межах норми (195–255 В).</div>
         </div>
-
-        <!-- Zoomed SVG Chart -->
-        <div style="width: 100%; overflow: hidden;">
-          <svg viewBox="0 0 520 175" style="width:100%; height:auto; display:block;">
-            <defs>
-              <linearGradient id="outageGrad_${idx}" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#3b82f6" stop-opacity="0.35"/>
-                <stop offset="100%" stop-color="#3b82f6" stop-opacity="0.0"/>
-              </linearGradient>
-            </defs>
-
-            <!-- Grid Lines -->
-            <line x1="35" y1="22" x2="505" y2="22" stroke="rgba(255,255,255,0.06)" stroke-dasharray="3 3"/>
-            <text x="30" y="26" fill="#94a3b8" font-size="8.5" text-anchor="end">${outage.maxKw}кВт</text>
-
-            <line x1="35" y1="${Math.round((22 + 145)/2)}" x2="505" y2="${Math.round((22 + 145)/2)}" stroke="rgba(255,255,255,0.06)" stroke-dasharray="3 3"/>
-            <text x="30" y="${Math.round((22 + 145)/2) + 3}" fill="#94a3b8" font-size="8.5" text-anchor="end">${outage.midKw}кВт</text>
-
-            <line x1="35" y1="145" x2="505" y2="145" stroke="rgba(255,255,255,0.12)"/>
-            <text x="30" y="148" fill="#94a3b8" font-size="8.5" text-anchor="end">0</text>
-
-            <!-- Average Dashed Line -->
-            <line x1="35" y1="${outage.yAvg}" x2="505" y2="${outage.yAvg}" stroke="#f59e0b" stroke-dasharray="4 3" stroke-width="1.2" opacity="0.8"/>
-            <text x="502" y="${Math.max(16, outage.yAvg - 4)}" fill="#f59e0b" font-size="8" font-weight="700" text-anchor="end">Сер: ${outage.avgKw} кВт</text>
-
-            <!-- Area fill -->
-            <path d="${outage.areaD}" fill="url(#outageGrad_${idx})" />
-
-            <!-- Power Curve -->
-            <path d="${outage.pathD}" fill="none" stroke="#3b82f6" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
-
-            <!-- Battery SOC Line -->
-            <path d="${outage.socD}" fill="none" stroke="#10b981" stroke-width="1.8" stroke-dasharray="3 3"/>
-
-            <!-- Peak Badge -->
-            <circle cx="${outage.peakX}" cy="${outage.peakY}" r="3.5" fill="#f59e0b" stroke="#fff" stroke-width="1.5"/>
-            <rect x="${outage.peakX - 22}" y="${Math.max(5, outage.peakY - 17)}" width="44" height="13" rx="3" fill="rgba(15, 23, 42, 0.88)" stroke="rgba(245, 158, 11, 0.4)" stroke-width="0.8"/>
-            <text x="${outage.peakX}" y="${Math.max(14, outage.peakY - 8)}" fill="#f59e0b" font-size="8.5" font-weight="700" text-anchor="middle">${outage.peakKw} кВт</text>
-
-            <!-- Timestamps -->
-            ${outage.labelsSvg}
-          </svg>
-        </div>
-
-        <!-- Legend -->
-        <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:0.68rem; color:#94a3b8; border-top:1px solid rgba(255,255,255,0.06); padding-top:6px;">
-          <span style="display:flex; align-items:center; gap:4px;"><span style="width:10px; height:2px; background:#3b82f6; display:inline-block;"></span> Споживання (кВт)</span>
-          <span style="display:flex; align-items:center; gap:4px;"><span style="width:10px; height:2px; background:#f59e0b; border-top:1px dashed #f59e0b; display:inline-block;"></span> Сер.: ${outage.avgKw} кВт</span>
-          <span style="display:flex; align-items:center; gap:4px;"><span style="width:10px; height:2px; background:#10b981; border-top:1px dashed #10b981; display:inline-block;"></span> АКБ: ${outage.socDrain > 0 ? `${outage.startSoc}% ➔ ${outage.minSoc}%` : `100% (~${outage.energyKwh} кВт·год)`}</span>
-        </div>
-      </div>
-    `).join('')}
+      ` : voltageCharts.map((outage, idx) => renderOutageCardHTML(outage, `outageGrad_v_${idx}`)).join('')}
+    </div>
 
     <div class="tip-box" style="background: ${state.tipBg}; border-color: ${state.tipBorder}; color: ${state.tipColor};">
       <div>${state.tipIcon}</div>
@@ -449,6 +490,41 @@ export function renderHTML(data) {
     </div>
   </div>
   <script>
+    function selectJournalTab(tab) {
+      const isB = (tab === 'blackout');
+      const tabB = document.getElementById('tab-blackout');
+      const tabV = document.getElementById('tab-voltage');
+      const panelB = document.getElementById('panel-blackout');
+      const panelV = document.getElementById('panel-voltage');
+      if (!tabB || !tabV || !panelB || !panelV) return;
+
+      tabB.setAttribute('aria-pressed', isB ? 'true' : 'false');
+      tabV.setAttribute('aria-pressed', !isB ? 'true' : 'false');
+
+      tabB.style.background = isB ? 'rgba(239,68,68,0.12)' : 'rgba(15,23,42,0.55)';
+      tabB.style.border = isB ? '1.5px solid rgba(239,68,68,0.65)' : '1px solid rgba(239,68,68,0.22)';
+      tabB.style.boxShadow = isB ? '0 0 0 1px rgba(239,68,68,0.2)' : 'none';
+      document.getElementById('dot-blackout').style.background = isB ? '#ef4444' : '#475569';
+      document.getElementById('dot-blackout').style.boxShadow = isB ? '0 0 0 3px rgba(239,68,68,0.25)' : 'none';
+      const stB = document.getElementById('state-blackout');
+      stB.textContent = isB ? 'Показано ▾' : 'Графіки ▸';
+      stB.style.color = isB ? '#fca5a5' : 'var(--text-muted)';
+      stB.style.fontWeight = isB ? '600' : '400';
+
+      tabV.style.background = !isB ? 'rgba(245,158,11,0.12)' : 'rgba(15,23,42,0.55)';
+      tabV.style.border = !isB ? '1.5px solid rgba(245,158,11,0.65)' : '1px solid rgba(245,158,11,0.22)';
+      tabV.style.boxShadow = !isB ? '0 0 0 1px rgba(245,158,11,0.2)' : 'none';
+      document.getElementById('dot-voltage').style.background = !isB ? '#f59e0b' : '#475569';
+      document.getElementById('dot-voltage').style.boxShadow = !isB ? '0 0 0 3px rgba(245,158,11,0.25)' : 'none';
+      const stV = document.getElementById('state-voltage');
+      stV.textContent = !isB ? 'Показано ▾' : 'Графіки ▸';
+      stV.style.color = !isB ? '#fcd34d' : 'var(--text-muted)';
+      stV.style.fontWeight = !isB ? '600' : '400';
+
+      panelB.classList.toggle('is-hidden', !isB);
+      panelV.classList.toggle('is-hidden', isB);
+    }
+
     setTimeout(() => location.reload(), 300000);
   </script>
 </body>

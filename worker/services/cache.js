@@ -13,6 +13,7 @@ export class TelemetryCache {
     this.ongoingFetchPromise = null;
     this.cachedDayRecords = {};
     this.kvSnapshotMeta = null;
+    this.refreshStartedAt = 0;
   }
 
   clear() {
@@ -21,6 +22,19 @@ export class TelemetryCache {
     this.ongoingFetchPromise = null;
     this.cachedDayRecords = {};
     this.kvSnapshotMeta = null;
+    this.refreshStartedAt = 0;
+  }
+
+  isRefreshing(maxAgeMs = 15000, now = Date.now()) {
+    return Boolean(this.refreshStartedAt && (now - this.refreshStartedAt < maxAgeMs));
+  }
+
+  markRefreshStart(now = Date.now()) {
+    this.refreshStartedAt = now;
+  }
+
+  markRefreshEnd() {
+    this.refreshStartedAt = 0;
   }
 
   getKvSnapshotMeta() {
@@ -81,7 +95,20 @@ export class TelemetryCache {
     }
 
     if (this.ongoingFetchPromise) {
-      return this.ongoingFetchPromise;
+      const pending = this.ongoingFetchPromise;
+      try {
+        return await pending;
+      } catch (err) {
+        if (this.ongoingFetchPromise === pending) {
+          this.ongoingFetchPromise = null;
+        }
+        if (this.isFresh()) {
+          return this.inMemoryData;
+        }
+        if (!(err && typeof err.message === 'string' && err.message.includes('request that has since ended'))) {
+          throw err;
+        }
+      }
     }
 
     this.ongoingFetchPromise = (async () => {

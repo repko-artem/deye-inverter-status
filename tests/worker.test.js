@@ -150,6 +150,88 @@ describe('Chart & HTML Rendering', () => {
     assert.ok(!html.includes('undefined'));
     assert.ok(!html.includes('NaN'));
   });
+
+  test('renderHTML defaults to DTEK blackouts tab and always pins ongoing event first as 4th chart', () => {
+    const mkChart = (overrides) => ({
+      isOngoing: false,
+      dayLabel: 'Сьогодні',
+      start: '10:00',
+      end: '10:30',
+      durStr: '30 хв',
+      peakKw: '10.0',
+      peakTime: '10:10',
+      avgKw: '7.5',
+      socDrain: 5,
+      startSoc: 100,
+      minSoc: 95,
+      energyKwh: '3.8',
+      maxKw: 12,
+      midKw: 6,
+      yAvg: 60,
+      areaD: 'M 35 145 L 505 145 Z',
+      pathD: 'M 35 60 L 505 60',
+      socD: 'M 35 30 L 505 45',
+      peakX: 200,
+      peakY: 40,
+      labelsSvg: '',
+      ...overrides
+    });
+
+    const html = renderHTML({
+      version: '1.6.3',
+      updated_at: '11:00',
+      battery_soc: 95,
+      battery_voltage: 648.0,
+      is_grid_on: false,
+      is_charging: false,
+      use_power_kw: 5.0,
+      charge_power_kw: 0,
+      discharge_power_kw: 5.0,
+      grid_power_kw: 0,
+      est_hours_formatted: '10 год',
+      est_time_until: 'до 21:00',
+      full_est_hours_formatted: '11 год',
+      stat_active_kw: '7.5',
+      stat_night_kw: '6.5',
+      discharge_24h_kwh: '12.0',
+      discharge_rate_pct: '7.7',
+      ongoing_outage_chart: mkChart({
+        isOngoing: true,
+        start: '10:50',
+        end: '11:00',
+        durStr: '10 хв',
+        eventType: 'VOLTAGE_SAG',
+        eventLabel: '📈 Завищена напруга (L2: 258 В)'
+      }),
+      blackout_outages: [
+        mkChart({ start: '01:00', end: '03:00', eventType: 'BLACKOUT', eventLabel: '🔴 Відключення ДТЕК (0 В)' }),
+        mkChart({ start: '04:00', end: '05:00', eventType: 'BLACKOUT', eventLabel: '🔴 Відключення ДТЕК (0 В)' }),
+        mkChart({ start: '06:00', end: '07:00', eventType: 'BLACKOUT', eventLabel: '🔴 Відключення ДТЕК (0 В)' })
+      ],
+      voltage_outages: [
+        mkChart({ start: '08:00', end: '08:25', eventType: 'VOLTAGE_SAG', eventLabel: '📈 Завищена напруга (L2: 257 В)' })
+      ],
+      outages: [],
+      journal: { count: 5, blackoutCount24h: 3, blackoutCountTotal: 12, voltageSagCount24h: 2, voltageSagCountTotal: 15, totalHours24hFormatted: '4 год', minSoc: 62 }
+    });
+
+    const ongoingPos = html.indexOf('Триває зараз:');
+    const panelBlackoutPos = html.indexOf('id="panel-blackout"');
+    const panelVoltagePos = html.indexOf('id="panel-voltage"');
+
+    assert.ok(ongoingPos > 0 && ongoingPos < panelBlackoutPos, 'Ongoing outage must be pinned BEFORE #panel-blackout');
+    assert.ok(panelBlackoutPos < panelVoltagePos, '#panel-blackout must precede #panel-voltage');
+    assert.ok(html.includes('id="tab-blackout" type="button" onclick="selectJournalTab(\'blackout\')" aria-pressed="true"'));
+    assert.ok(html.includes('id="tab-voltage" type="button" onclick="selectJournalTab(\'voltage\')" aria-pressed="false"'));
+    assert.ok(html.includes('<div id="panel-blackout" class="journal-panel">'));
+    assert.ok(html.includes('<div id="panel-voltage" class="journal-panel is-hidden">'));
+    assert.ok(html.includes('id="outageGrad_ongoing"'));
+    assert.ok(html.includes('id="outageGrad_b_0"'));
+    assert.ok(html.includes('id="outageGrad_b_2"'));
+    assert.ok(html.includes('id="outageGrad_v_0"'));
+    assert.ok(!html.includes('undefined'));
+    assert.ok(!html.includes('NaN'));
+  });
 });
 
 describe('Autonomy Estimation (calculateAutonomy)', () => {
@@ -1187,5 +1269,230 @@ describe('3-Phase Voltage Tracking & Outage Cause Classification', () => {
     assert.ok(html.includes('~232 В'));
     assert.ok(!html.includes('undefined'));
     assert.ok(!html.includes('NaN'));
+  });
+
+  test('getFreshTelemetry populates separate blackout_outages (3), voltage_outages (3) and pinned ongoing_outage_chart', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const bucketNow = Math.floor(nowSec / 300) * 300;
+      const records = [];
+      const voltageSeries = [];
+
+      const pushSeg = (startOffsetSlots, lenSlots, { wirePower, batteryPower, usePower, socStart, socEnd, v }) => {
+        for (let k = 0; k < lenSlots; k++) {
+          const ts = bucketNow + (startOffsetSlots + k) * 300;
+          const soc = Math.round(socStart + ((socEnd - socStart) * k) / Math.max(1, lenSlots - 1));
+          records.push({ dateTime: ts, wirePower, batteryPower, usePower, batterySoc: soc });
+          voltageSeries.push({ ts, v });
+        }
+      };
+
+      // Completed Blackout #1 (oldest)
+      pushSeg(-50, 4, { wirePower: 0, batteryPower: 7000, usePower: 7000, socStart: 100, socEnd: 96, v: [0, 0, 0] });
+      pushSeg(-46, 2, { wirePower: 5000, batteryPower: 0, usePower: 3000, socStart: 96, socEnd: 96, v: [230, 231, 229] });
+      // Completed Blackout #2
+      pushSeg(-40, 4, { wirePower: 0, batteryPower: 7500, usePower: 7500, socStart: 100, socEnd: 95, v: [0, 0, 0] });
+      pushSeg(-36, 2, { wirePower: 5000, batteryPower: 0, usePower: 3000, socStart: 95, socEnd: 95, v: [230, 231, 229] });
+      // Completed Blackout #3
+      pushSeg(-30, 4, { wirePower: 0, batteryPower: 7800, usePower: 7800, socStart: 100, socEnd: 94, v: [0, 0, 0] });
+      pushSeg(-26, 2, { wirePower: 5000, batteryPower: 0, usePower: 3000, socStart: 94, socEnd: 94, v: [230, 231, 229] });
+      // Two completed Overvoltage trips more recent than blackouts
+      pushSeg(-22, 3, { wirePower: 0, batteryPower: 4000, usePower: 4000, socStart: 100, socEnd: 97, v: [240, 258, 241] });
+      pushSeg(-19, 2, { wirePower: 5000, batteryPower: 0, usePower: 3000, socStart: 97, socEnd: 97, v: [235, 242, 236] });
+      pushSeg(-14, 3, { wirePower: 0, batteryPower: 4200, usePower: 4200, socStart: 100, socEnd: 96, v: [241, 259, 240] });
+      pushSeg(-11, 2, { wirePower: 5000, batteryPower: 0, usePower: 3000, socStart: 96, socEnd: 96, v: [235, 242, 236] });
+      // Ongoing Overvoltage trip right now
+      pushSeg(-3, 3, { wirePower: 0, batteryPower: 4500, usePower: 4500, socStart: 100, socEnd: 99, v: [242, 257, 240] });
+
+      const mkVSeries = (name, idx) => ({
+        storageName: name,
+        detailList: voltageSeries.map(p => ({ collectionTime: p.ts + 30, value: p.v[idx] }))
+      });
+
+      globalThis.fetch = async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('/maintain-s/station/display/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              batterySoc: 99,
+              batteryBv: 650.0,
+              gridRelayStatus: 'off',
+              wirePower: 0,
+              batteryPower: 4500,
+              usePower: 4500,
+              networkStatus: 'NORMAL',
+              lastUpdateTime: nowSec
+            })
+          };
+        }
+        if (urlStr.includes('/device-s/device/')) {
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({
+              data: [
+                mkVSeries('G_V_L1', 0),
+                mkVSeries('G_V_L2', 1),
+                mkVSeries('G_V_L3', 2)
+              ]
+            })
+          };
+        }
+        if (urlStr.includes('/maintain-s/history/batteryPower/')) {
+          const dKyiv = new Date((nowSec + 7200) * 1000);
+          const todayQuery = `year=${dKyiv.getUTCFullYear()}&month=${dKyiv.getUTCMonth() + 1}&day=${dKyiv.getUTCDate()}`;
+          const isToday = urlStr.includes(todayQuery);
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ records: isToday ? records : [] })
+          };
+        }
+        return { ok: false, status: 404, text: async () => '{}' };
+      };
+
+      const env = {
+        DEYE_TOKEN: 'mock-token',
+        DEYE_STATION_ID: 'mock-station',
+        DEYE_DEVICE_ID: '15987482',
+        DEYE_API_BASE: 'https://mock.deye.com'
+      };
+
+      const data = await getFreshTelemetry(env);
+      assert.ok(data.ongoing_outage_chart && data.ongoing_outage_chart.isOngoing, 'Ongoing chart must be returned separately');
+      assert.equal(data.ongoing_outage_chart.eventType, 'VOLTAGE_SAG');
+      assert.equal(data.blackout_outages.length, 3, 'All 3 completed DTEK blackouts must remain available despite more recent voltage trips');
+      assert.equal(data.voltage_outages.length, 2, '2 completed voltage protection trips must be in voltage_outages (excluding ongoing)');
+      assert.equal(data.voltage_outages.some(c => c.isOngoing), false, 'Ongoing event must not duplicate inside voltage_outages');
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalCache.clear();
+    }
+  });
+});
+
+describe('Error 1101 Cross-Request Promise Protection (v1.6.4)', () => {
+  test('TelemetryCache.getOrFetch recovers cleanly from cross-request promise cancellation errors', async () => {
+    const TelemetryCache = globalCache.constructor;
+    const cache = new TelemetryCache();
+
+    // Simulate a dangling promise created by an earlier HTTP request that ended
+    const deadPromise = Promise.reject(
+      new Error('This promise was created by a request that has since ended, so it can never settle.')
+    );
+    deadPromise.catch(() => {});
+    cache.ongoingFetchPromise = deadPromise;
+
+    let localFetchCount = 0;
+    const result = await cache.getOrFetch(async () => {
+      localFetchCount += 1;
+      return { battery_soc: 91, status: 'ok' };
+    });
+
+    assert.equal(localFetchCount, 1, 'Caller should retry locally in its own request context');
+    assert.deepEqual(result, { battery_soc: 91, status: 'ok' });
+    assert.equal(cache.ongoingFetchPromise, null, 'Dangling ongoingFetchPromise must be cleared');
+  });
+
+  test('worker.fetch deduplicates SWR background refreshes via isRefreshing() without sharing cross-request promises', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    let resolveSlowFetch;
+    try {
+      const staleData = {
+        updated_at: '14:00',
+        battery_soc: 85,
+        battery_voltage: 642.0,
+        battery_power_kw: '0.50',
+        solar_power_kw: '0.00',
+        grid_voltage: 231,
+        grid_voltages: { l1: 230, l2: 231, l3: 232 },
+        grid_power_kw: '1.20',
+        load_power_kw: '1.20',
+        is_grid_online: true,
+        is_charging: false,
+        is_discharging: false,
+        is_offline: false,
+        system_state: 'ONLINE',
+        state_label: 'Мережа',
+        state_icon: '⚡',
+        badge_text: 'Мережа',
+        badge_color: '#10b981',
+        autonomy_hours: 10,
+        autonomy_formatted: '10 год',
+        discharge_rate_pct_per_hour: 10,
+        last_outage_info: null,
+        ongoing_outage_chart: null,
+        outage_charts: [],
+        blackout_outages: [],
+        voltage_outages: [],
+        recent_outages: [],
+        journal: { count: 0, totalHours24hFormatted: '0 хв', minSoc: 100 }
+      };
+
+      // Seed stale in-memory cache (120s old: > 60s TTL, < 300s SWR max age)
+      globalCache.setRecent(staleData, Date.now() - 120 * 1000);
+
+      const slowGate = new Promise(resolve => { resolveSlowFetch = resolve; });
+      let fetchCalls = 0;
+      globalThis.fetch = async (url) => {
+        fetchCalls += 1;
+        await slowGate;
+        const urlStr = url.toString();
+        if (urlStr.includes('/station/latest')) {
+          return new Response(JSON.stringify({
+            success: true,
+            batterySOC: 97,
+            gridPower: 1000,
+            wirePower: 1000,
+            consumptionPower: 1000,
+            generationPower: 0,
+            lastUpdateTime: Math.floor(Date.now() / 1000)
+          }));
+        }
+        if (urlStr.includes('/station/history')) {
+          return new Response(JSON.stringify({ success: true, stationDataItems: [] }));
+        }
+        return new Response(JSON.stringify({ success: true, deviceDataList: [] }));
+      };
+
+      const backgroundPromises = [];
+      const ctx = {
+        waitUntil(p) {
+          backgroundPromises.push(p);
+        }
+      };
+      const env = { DEYE_TOKEN: 't', DEYE_STATION_ID: 's' };
+
+      // First stale request schedules one background SWR refresh (+ telegram notification task)
+      const res1 = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/status'), env, ctx);
+      assert.equal(res1.status, 200);
+      assert.equal(globalCache.isRefreshing(), true, 'isRefreshing() must be true while SWR fetch is in flight');
+      const countAfterReq1 = backgroundPromises.length;
+      assert.equal(countAfterReq1, 2, 'First request should schedule 1 SWR refresh + 1 telegram notification task');
+      const fetchesAfterReq1 = fetchCalls;
+
+      // Second concurrent request sees isRefreshing() === true and serves stale snapshot cleanly without awaiting req1 promise
+      const res2 = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/status'), env, ctx);
+      assert.equal(res2.status, 200);
+      const body2 = await res2.json();
+      assert.equal(body2.battery_soc, 85);
+      assert.equal(backgroundPromises.length, countAfterReq1 + 1, 'Second request must only schedule telegram task and skip duplicate SWR refresh while isRefreshing() is true');
+      assert.equal(fetchCalls, fetchesAfterReq1, 'Second request must not trigger duplicate upstream fetches');
+
+      // Let the background fetch finish cleanly
+      if (resolveSlowFetch) resolveSlowFetch();
+      await Promise.all(backgroundPromises);
+      assert.equal(globalCache.isRefreshing(), false, 'isRefreshing() must reset after SWR refresh finishes');
+      assert.ok(fetchCalls >= 1);
+    } finally {
+      if (resolveSlowFetch) resolveSlowFetch();
+      globalThis.fetch = originalFetch;
+      globalCache.clear();
+    }
   });
 });

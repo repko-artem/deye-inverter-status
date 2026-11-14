@@ -2,7 +2,7 @@ import { CONFIG } from '../config.js';
 import { DeyeClient } from './deye-client.js';
 import { globalCache } from './cache.js';
 import { calculateAutonomy, calculateDischargeRate, calculate24hDischarge } from '../domain/autonomy.js';
-import { analyzeMultiDayOutages, calculateOutageStatistics } from '../domain/outages.js';
+import { analyzeMultiDayOutages, calculateOutageStatistics, OutageType } from '../domain/outages.js';
 import { buildOutageChart } from '../ui/chart.js';
 import { resolveSystemState } from '../domain/system-state.js';
 import { nowUtcSec, formatKyivTime, formatKyivDate } from '../domain/time.js';
@@ -364,22 +364,36 @@ export class TelemetryService {
         : "0";
 
       const validOutages = outageJournal.validEvents || [];
-      // Показувати поточне відключення (навіть якщо розряд ще <= 1%), а для минулих відключень
-      // показувати графіки лише якщо розряд батареї був більше 1% (> 1%).
+      // Показувати поточне відключення завжди першим (навіть якщо розряд ще <= 1%),
+      // а для минулих відключень формуємо до 3 останніх графіків окремо по кожній категорії (ДТЕК / Напруга) при розряді > 1%.
       const minDrain = this.config.THRESHOLDS.MIN_OUTAGE_CHART_SOC_DRAIN ?? 1;
-      const chartEligibleOutages = validOutages.filter(e => {
-        const drain = e.socDrain != null ? e.socDrain : Math.max(0, (e.startSoc || 0) - (e.minSoc || 0));
-        return e.isOngoing || drain > minDrain;
-      });
-      const recentOutages = chartEligibleOutages.slice(-3).reverse();
-      const outageCharts = recentOutages
-        .map((e, idx) => buildOutageChart(e, multiDayRecords, chartEligibleOutages.length - idx, this.config))
+      const getEventDrain = (e) => (e.socDrain != null ? e.socDrain : Math.max(0, (e.startSoc || 0) - (e.minSoc || 0)));
+      const buildChartList = (events, totalBase) => events
+        .slice(-3)
+        .reverse()
+        .map((e, idx) => buildOutageChart(e, multiDayRecords, totalBase - idx, this.config))
         .filter(Boolean)
         .filter(c => c.isOngoing || c.socDrain > minDrain);
 
+      const ongoingEvent = validOutages.find(e => e.isOngoing) || null;
+      const ongoing_outage_chart = ongoingEvent
+        ? buildOutageChart(ongoingEvent, multiDayRecords, validOutages.length, this.config)
+        : null;
+
+      const completedEligible = validOutages.filter(e => !e.isOngoing && getEventDrain(e) > minDrain);
+      const completedBlackouts = completedEligible.filter(e => e.eventType === OutageType.BLACKOUT);
+      const completedVoltages = completedEligible.filter(e => e.eventType !== OutageType.BLACKOUT);
+
+      const blackout_outages = buildChartList(completedBlackouts, completedBlackouts.length);
+      const voltage_outages = buildChartList(completedVoltages, completedVoltages.length);
+      const combinedCompleted = buildChartList(completedEligible, completedEligible.length);
+      const outageCharts = ongoing_outage_chart
+        ? [ongoing_outage_chart, ...combinedCompleted]
+        : combinedCompleted;
+
       // 9. Доменний розрахунок витрати та темпу розряду
       const discharge_24h_kwh = calculate24hDischarge(records24h, this.config);
-      const curOngoingChart = outageCharts.find(c => c && c.isOngoing);
+      const curOngoingChart = ongoing_outage_chart;
       const { ratePct: discharge_rate_pct, subtext: discharge_rate_subtext } = calculateDischargeRate(
         use_power_kw,
         discharge_power_kw,
@@ -429,6 +443,9 @@ export class TelemetryService {
         stat_active_kw: statActiveKw.toFixed(1),
         stat_night_kw: statNightKw.toFixed(1),
         journal: outageJournal,
+        ongoing_outage_chart,
+        blackout_outages,
+        voltage_outages,
         outages: outageCharts,
         debug_info: {
           isOnline: is_online,
@@ -540,6 +557,9 @@ export class TelemetryService {
         stat_active_kw: this.config.THRESHOLDS.DEFAULT_ACTIVE_KW.toFixed(1),
         stat_night_kw: this.config.THRESHOLDS.DEFAULT_NIGHT_KW.toFixed(1),
         journal: { count: 0, totalMin: 0, minSoc: 100, events: [] },
+        ongoing_outage_chart: null,
+        blackout_outages: [],
+        voltage_outages: [],
         outages: []
       };
     }

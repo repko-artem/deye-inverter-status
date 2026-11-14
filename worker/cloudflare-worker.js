@@ -15,25 +15,40 @@ import { resolveSystemState, SystemStateId, SystemState } from './domain/system-
 import { processTelegramNotifications } from './services/telegram-notifier.js';
 
 /**
- * Отримання телеметрії з багаторівневим кешуванням (Memory + KV Snapshot + SWR)
+ * Отримання телеметрії з багаторівневим кешуванням (Memory + KV Snapshot + SWR).
+ * Кожен запит виконує fetch у власному I/O контексті (без спільного Promise між запитами),
+ * щоб виключити помилку 1101 (handle_cross_request_promise_resolution) у Cloudflare Workers.
  */
 async function getCachedTelemetry(env, ctx, isBypass = false) {
   if (!isBypass && globalCache.isFresh()) {
     return globalCache.getRecent();
   }
 
-  const triggerFetch = () => globalCache.getOrFetch(() => {
-    const service = new TelemetryService(env, globalCache, CONFIG);
-    return service.getTelemetry();
-  });
+  const runLocalFetch = async () => {
+    globalCache.markRefreshStart();
+    try {
+      const service = new TelemetryService(env, globalCache, CONFIG);
+      const fresh = await service.getTelemetry();
+      if (!globalCache.isFresh()) {
+        globalCache.setRecent(fresh);
+      }
+      return fresh;
+    } finally {
+      globalCache.markRefreshEnd();
+    }
+  };
+
+  const scheduleBackgroundRefresh = () => {
+    if (ctx && ctx.waitUntil && !globalCache.isRefreshing()) {
+      ctx.waitUntil(runLocalFetch().catch(err => console.error('SWR refresh error:', err)));
+    }
+  };
 
   if (!isBypass) {
     const swrMaxAgeMs = CONFIG.CACHE.SWR_MAX_AGE_MS || 300000;
     const recent = globalCache.getRecent();
     if (recent && (globalCache.getAgeSec() * 1000) < swrMaxAgeMs) {
-      if (ctx && ctx.waitUntil) {
-        ctx.waitUntil(triggerFetch().catch(err => console.error('SWR refresh error:', err)));
-      }
+      scheduleBackgroundRefresh();
       return recent;
     }
 
@@ -48,9 +63,7 @@ async function getCachedTelemetry(env, ctx, isBypass = false) {
             return snap.data;
           }
           if (ageMs < swrMaxAgeMs) {
-            if (ctx && ctx.waitUntil) {
-              ctx.waitUntil(triggerFetch().catch(err => console.error('SWR refresh error:', err)));
-            }
+            scheduleBackgroundRefresh();
             return snap.data;
           }
         }
@@ -60,7 +73,7 @@ async function getCachedTelemetry(env, ctx, isBypass = false) {
     }
   }
 
-  return triggerFetch();
+  return runLocalFetch();
 }
 
 /**
