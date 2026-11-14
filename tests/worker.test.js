@@ -1622,4 +1622,47 @@ describe('30-Day Monthly Archive API & Modal UI (v1.7.0)', () => {
     assert.ok(html.includes('id="archive-kpi-extremum"'), 'Should render 4 balanced KPI cards');
     assert.ok(html.includes('/api/archive'), 'Client script should fetch /api/archive lazily on open');
   });
+
+  test('analyzeMultiDayOutages classifies ongoing overvoltage immediately via liveGridVoltages or pre-trigger bar', () => {
+    const t0 = 1794697800; // pre-trigger bar
+    const recordsNoLiveV = [
+      { dateTime: t0, wirePower: 5000, batteryPower: 0, batterySoc: 100 },
+      { dateTime: t0 + 300, wirePower: 0, batteryPower: 7400, batterySoc: 100 }
+    ];
+
+    // 1. Live grid voltage shows L2 = 249V (> 248V reconnect threshold) while 5-min bar lacks v1/v2/v3
+    const withOvervoltage = analyzeMultiDayOutages(
+      recordsNoLiveV,
+      new Date((t0 + 480) * 1000),
+      CONFIG,
+      { liveGridVoltages: { l1: 229, l2: 249, l3: 216, ts: t0 + 420 } }
+    );
+    assert.ok(withOvervoltage.currentOutage, 'Should detect ongoing event');
+    assert.equal(withOvervoltage.currentOutage.voltageCause, 'OVERVOLTAGE');
+    assert.equal(withOvervoltage.currentOutage.eventLabel, '📈 Завищена напруга (L2: 249 В)');
+
+    // 2. Nominal in-range live voltage should include extreme phase hint in initial check badge
+    const withNominalLive = analyzeMultiDayOutages(
+      recordsNoLiveV,
+      new Date((t0 + 480) * 1000),
+      CONFIG,
+      { liveGridVoltages: { l1: 237, l2: 244.7, l3: 227.9, ts: t0 + 420 } }
+    );
+    assert.ok(withNominalLive.currentOutage);
+    assert.equal(withNominalLive.currentOutage.isInitialPhase, true);
+    assert.equal(withNominalLive.currentOutage.eventLabel, '⚡ Перевірка стабільності (L2: 245 В)');
+
+    // 3. Pre-trigger bar out-of-range voltage also classifies even when outage bar lacks v1/v2/v3
+    const withPreTrigger = analyzeMultiDayOutages(
+      [
+        { dateTime: t0, wirePower: 5000, batteryPower: 0, batterySoc: 100, v1: 230, v2: 235, v3: 192.4 },
+        { dateTime: t0 + 300, wirePower: 0, batteryPower: 6500, batterySoc: 100 }
+      ],
+      new Date((t0 + 420) * 1000),
+      CONFIG
+    );
+    assert.ok(withPreTrigger.currentOutage);
+    assert.equal(withPreTrigger.currentOutage.voltageCause, 'UNDERVOLTAGE');
+    assert.equal(withPreTrigger.currentOutage.eventLabel, '📉 Занижена напруга (L3: 192 В)');
+  });
 });

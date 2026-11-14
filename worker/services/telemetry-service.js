@@ -178,7 +178,12 @@ export class TelemetryService {
         time_to_full_est = formatKyivTime(currentUtcSec + Math.round(hoursToFull * 3600));
       }
 
-      const outageJournal = analyzeMultiDayOutages(multiDayRecords, currentUtcSec, this.config);
+      const outageJournal = analyzeMultiDayOutages(
+        multiDayRecords,
+        currentUtcSec,
+        this.config,
+        { liveGridVoltages: latestVoltages?.grid || null }
+      );
       const { statActiveKw, statNightKw } = calculateOutageStatistics(multiDayRecords, this.config, outageJournal);
       const { est_hours_formatted, est_time_until, hoursConservative } = calculateAutonomy(
         soc, is_grid_on, use_power_kw, statActiveKw, statNightKw, nowKyiv, this.config
@@ -359,13 +364,18 @@ export class TelemetryService {
     const [yToday, mToday, dToday] = todayDateStr.split('-').map(Number);
     const pastDays = getPastDaysList(currentUtcSec, days);
 
-    const [{ pastChronological, daysLoadedPast, remainingAfterFetch }, { todayRecords }] = await Promise.all([
+    const [{ pastChronological, daysLoadedPast, remainingAfterFetch }, { todayRecords, latestVoltages }] = await Promise.all([
       this.repository.loadArchive30dWindow(pastDays, maxBatchDays),
       this.repository.loadTodayWithVoltages(yToday, mToday, dToday)
     ]);
 
     const allRecords = [...pastChronological, ...todayRecords];
-    const journal = analyzeMultiDayOutages(allRecords, currentUtcSec, this.config);
+    const journal = analyzeMultiDayOutages(
+      allRecords,
+      currentUtcSec,
+      this.config,
+      { liveGridVoltages: latestVoltages?.grid || null }
+    );
     const daysAvailable = daysLoadedPast + (todayRecords.length > 0 ? 1 : 0);
 
     const archive = buildArchiveResponse({

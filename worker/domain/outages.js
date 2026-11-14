@@ -74,8 +74,8 @@ export function classifyOutageEvent(event, config = CONFIG) {
   const durationMin = event.durationMin || 0;
   const socDrain = event.socDrain ?? Math.max(0, (event.startSoc || 0) - (event.minSoc || 0));
 
-  // 1. Точна класифікація за трифазною вхідною напругою мережі (якщо є дані)
-  if ((event.voltageSampleCount || 0) > 0) {
+  // 1. Точна класифікація за трифазною вхідною напругою мережі (якщо є дані в події або на старті)
+  if ((event.voltageSampleCount || 0) > 0 || event.maxGridV !== null || event.minGridV !== null) {
     if ((event.zeroVoltageTicks || 0) > 0) {
       return {
         type: OutageType.BLACKOUT,
@@ -133,9 +133,47 @@ export function classifyOutageEvent(event, config = CONFIG) {
 }
 
 /**
+ * Підмішує найсвіжіші поточні напруги пристрою у триваючу подію (навіть до появи чергового 5-хв бару).
+ */
+function applyLiveGridVoltages(curr, liveGridVoltages) {
+  if (!curr || !liveGridVoltages) return;
+  const { l1, l2, l3, ts } = liveGridVoltages;
+  if (typeof l1 !== 'number' || typeof l2 !== 'number' || typeof l3 !== 'number') return;
+  if (typeof ts === 'number' && ts < curr.startTimestampSec - 300) return;
+
+  const isPreTrigger = typeof ts === 'number' && ts < curr.startTimestampSec;
+  updateEventVoltageStats(curr, { v1: l1, v2: l2, v3: l3 }, isPreTrigger);
+}
+
+/**
+ * Обирає фазу з найбільшим відхиленням від номіналу 230 В для компактного бейджа перевірки.
+ */
+function formatNominalPhaseHint(curr) {
+  if (curr.maxGridV !== null && curr.minGridV !== null) {
+    const overDist = Math.abs(curr.maxGridV - 230);
+    const underDist = Math.abs(230 - curr.minGridV);
+    if (overDist >= underDist && curr.maxPhase) {
+      return `${curr.maxPhase}: ${Math.round(curr.maxGridV)} В`;
+    }
+    if (curr.minPhase) {
+      return `${curr.minPhase}: ${Math.round(curr.minGridV)} В`;
+    }
+  }
+  if (curr.lastGridVoltages) {
+    const { l1, l2, l3 } = curr.lastGridVoltages;
+    const phases = [['L1', l1], ['L2', l2], ['L3', l3]].filter(([, v]) => typeof v === 'number');
+    if (phases.length > 0) {
+      phases.sort((a, b) => Math.abs(b[1] - 230) - Math.abs(a[1] - 230));
+      return `${phases[0][0]}: ${Math.round(phases[0][1])} В`;
+    }
+  }
+  return null;
+}
+
+/**
  * Аналіз багатоденного журналу відключень (фільтрація шуму <= 10 хв, підрахунок тривалості та агрегація).
  */
-export function analyzeMultiDayOutages(records, now, config = CONFIG) {
+export function analyzeMultiDayOutages(records, now, config = CONFIG, options = {}) {
   if (!records || records.length === 0) {
     return {
       count: 0,
@@ -238,10 +276,17 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
     curr.isOngoing = true;
     curr.socDrain = Math.max(0, curr.startSoc - curr.minSoc);
 
-    const hasExplicitVoltageCause = curr.voltageSampleCount > 0 && (
-      curr.zeroVoltageTicks > 0 ||
+    if (options && options.liveGridVoltages) {
+      applyLiveGridVoltages(curr, options.liveGridVoltages);
+    }
+
+    const hasOutOfBoundsVoltage = (
       (curr.maxGridV !== null && curr.maxGridV >= 248) ||
       (curr.minGridV !== null && curr.minGridV < 205)
+    );
+    const hasExplicitVoltageCause = (
+      ((curr.voltageSampleCount || 0) > 0 && (curr.zeroVoltageTicks > 0 || hasOutOfBoundsVoltage)) ||
+      hasOutOfBoundsVoltage
     );
 
     if (hasExplicitVoltageCause) {
@@ -258,12 +303,17 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
       const isInitialPhase = curr.durationMin <= initialPhaseMin && curr.socDrain <= 1;
       curr.isInitialPhase = isInitialPhase;
       if (isInitialPhase) {
+        const phaseHint = formatNominalPhaseHint(curr);
         curr.eventType = OutageType.VOLTAGE_SAG;
         curr.voltageCause = 'VOLTAGE_SAG';
-        curr.eventLabel = '⚡ Перевірка стабільності мережі';
+        curr.eventLabel = phaseHint
+          ? `⚡ Перевірка стабільності (${phaseHint})`
+          : '⚡ Перевірка стабільності мережі';
         curr.eventBadgeColor = '#f59e0b';
         curr.eventBadgeBg = 'rgba(245, 158, 11, 0.15)';
-        curr.eventDescription = 'Можливе виходження напруги за межі 195–255 В або початок відключення.';
+        curr.eventDescription = phaseHint
+          ? `Перевірка стабільності мережі (зараз ${phaseHint}, допустимо 205–248 В).`
+          : 'Можливе виходження напруги за межі 195–255 В або початок відключення.';
       } else {
         curr.eventType = OutageType.BLACKOUT;
         curr.voltageCause = 'BLACKOUT';
