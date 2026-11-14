@@ -87,12 +87,21 @@ export async function getFreshTelemetry(env) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const isArchive = (url.pathname === "/api/archive");
     const isApi = (url.pathname === "/api/status" || url.pathname === "/status.json");
     const isGetOrHead = (request.method === 'GET' || request.method === 'HEAD');
 
+    const securityHeaders = {
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Permissions-Policy": "geolocation=(), camera=(), microphone=()"
+    };
+
     // 1. Перевірка Edge-кешу Cloudflare (глобальна CDN)
     const cache = (typeof caches !== 'undefined' && caches.default) ? caches.default : null;
-    const normalizedKey = new Request(url.origin + (isApi ? "/api/status" : "/"), { method: 'GET' });
+    const cachePath = isArchive ? "/api/archive" : (isApi ? "/api/status" : "/");
+    const normalizedKey = new Request(url.origin + cachePath, { method: 'GET' });
     const isBypass = (url.searchParams.get("fresh") === "1" || url.searchParams.get("bypass") === "1");
 
     if (!isBypass && isGetOrHead && cache) {
@@ -104,6 +113,28 @@ export default {
       }
     }
 
+    // 1.5. Ендпоінт 30-денного архіву подій (завантажується на вимогу при відкритті модального вікна)
+    if (isArchive) {
+      const service = new TelemetryService(env, globalCache, CONFIG);
+      const archive = await service.getOutageArchive();
+      const isPartial = Boolean(archive?.period?.isPartial);
+      const archiveResp = new Response(
+        request.method === 'HEAD' ? null : JSON.stringify(archive),
+        {
+          headers: {
+            ...securityHeaders,
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": isPartial ? "no-store" : "public, max-age=120, s-maxage=120"
+          }
+        }
+      );
+      if (!isBypass && !isPartial && isGetOrHead && cache && ctx && ctx.waitUntil) {
+        ctx.waitUntil(cache.put(normalizedKey, archiveResp.clone()));
+      }
+      return archiveResp;
+    }
+
     // 2. Отримання даних через багаторівневий кеш (Memory + KV + SWR)
     const data = await getCachedTelemetry(env, ctx, isBypass);
     const cacheAgeSec = Math.max(0, globalCache.getAgeSec());
@@ -112,13 +143,6 @@ export default {
     if (ctx && ctx.waitUntil) {
       ctx.waitUntil(processTelegramNotifications(data, env));
     }
-
-    const securityHeaders = {
-      "X-Content-Type-Options": "nosniff",
-      "X-Frame-Options": "SAMEORIGIN",
-      "Referrer-Policy": "strict-origin-when-cross-origin",
-      "Permissions-Policy": "geolocation=(), camera=(), microphone=()"
-    };
 
     const baseHeaders = {
       ...securityHeaders,

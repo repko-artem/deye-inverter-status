@@ -254,6 +254,56 @@ export function renderHTML(data) {
     .tip-box { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); border-radius: 16px; padding: 12px; display: flex; gap: 10px; font-size: 0.8rem; color: #fef3c7; }
     .footer { text-align: center; font-size: 0.75rem; color: var(--text-muted); padding: 12px 0; }
     .btn { background: rgba(255,255,255,0.08); border: 1px solid var(--card-border); color: #fff; padding: 7px 14px; border-radius: 10px; cursor: pointer; font-weight: 600; margin-top: 6px; font-size: 0.75rem; }
+
+    /* MONTHLY ARCHIVE TRIGGER & NATIVE MODAL DIALOG */
+    .archive-trigger-btn { width: 100%; margin-top: 9px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 13px; border-radius: 12px; background: linear-gradient(135deg, rgba(59,130,246,0.16), rgba(30,41,59,0.85)); border: 1px solid rgba(96,165,250,0.35); color: var(--text-main); font-family: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: transform 0.12s ease, border-color 0.18s ease, background 0.18s ease; }
+    .archive-trigger-btn:hover { border-color: rgba(96,165,250,0.7); background: linear-gradient(135deg, rgba(59,130,246,0.25), rgba(30,41,59,0.92)); }
+    .archive-trigger-btn:active { transform: scale(0.99); }
+    .archive-trigger-left { display: flex; align-items: center; gap: 8px; text-align: left; }
+    .archive-trigger-sub { display: block; font-size: 0.68rem; font-weight: 400; color: var(--text-muted); margin-top: 1px; }
+    .archive-pill { display: inline-flex; align-items: center; gap: 5px; background: rgba(59,130,246,0.2); border: 1px solid rgba(96,165,250,0.35); color: #93c5fd; padding: 4px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
+
+    dialog.archive-modal { margin: auto; width: calc(100vw - 24px); max-width: 480px; max-height: min(86vh, 720px); padding: 0; border: 1px solid rgba(255,255,255,0.14); border-radius: 22px; background: #0f172a; color: var(--text-main); box-shadow: 0 24px 60px rgba(0,0,0,0.65); overflow: hidden; }
+    dialog.archive-modal[open] { display: flex; flex-direction: column; }
+    dialog.archive-modal:modal { overscroll-behavior: contain; }
+    dialog.archive-modal::backdrop { background: rgba(2,6,23,0.74); backdrop-filter: blur(5px); overflow: hidden; overscroll-behavior: contain; }
+
+    .modal-head { padding: 15px 16px 12px; background: rgba(15,23,42,0.96); border-bottom: 1px solid rgba(255,255,255,0.08); flex-shrink: 0; }
+    .modal-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .modal-title { font-size: 1rem; font-weight: 700; line-height: 1.25; }
+    .modal-subtitle { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
+    .modal-close-x { width: 32px; height: 32px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(30,41,59,0.8); color: var(--text-muted); font-size: 1rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: color 0.15s ease, background 0.15s ease; }
+    .modal-close-x:hover { color: #fff; background: rgba(239,68,68,0.25); border-color: rgba(239,68,68,0.45); }
+    .modal-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 11px; }
+    .modal-kpi { background: rgba(30,41,59,0.6); border: 1px solid rgba(255,255,255,0.06); border-radius: 11px; padding: 7px 6px; text-align: center; }
+    .modal-kpi-val { font-size: 0.86rem; font-weight: 700; }
+    .modal-kpi-lbl { font-size: 0.65rem; color: var(--text-muted); margin-top: 1px; }
+    .filter-bar { display: flex; gap: 6px; margin-top: 10px; }
+    .filter-chip { flex: 1; padding: 6px 8px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.1); background: rgba(30,41,59,0.55); color: var(--text-muted); font-family: inherit; font-size: 0.73rem; font-weight: 600; cursor: pointer; transition: all 0.15s ease; text-align: center; }
+    .filter-chip.is-active { background: rgba(59,130,246,0.22); border-color: rgba(96,165,250,0.65); color: #eff6ff; }
+    .filter-chip.is-active-b { background: rgba(239,68,68,0.18); border-color: rgba(239,68,68,0.65); color: #fecaca; }
+    .filter-chip.is-active-v { background: rgba(245,158,11,0.18); border-color: rgba(245,158,11,0.65); color: #fde68a; }
+
+    .modal-body { padding: 10px 14px 14px; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+    .archive-status-note { font-size: 0.72rem; color: #93c5fd; background: rgba(59,130,246,0.12); border: 1px solid rgba(96,165,250,0.28); border-radius: 10px; padding: 7px 10px; text-align: center; }
+    .archive-row { background: rgba(30,41,59,0.58); border: 1px solid rgba(255,255,255,0.07); border-left-width: 3.5px; border-radius: 13px; padding: 9px 11px; display: flex; flex-direction: column; gap: 6px; }
+    .archive-row.type-blackout { border-left-color: #ef4444; }
+    .archive-row.type-voltage { border-left-color: #f59e0b; }
+    .archive-row.is-ongoing { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.38); }
+    .archive-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .archive-when { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 700; color: var(--text-main); }
+    .archive-when .day { color: #cbd5e1; font-weight: 600; }
+    .archive-badges { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .badge-cause { font-size: 0.68rem; font-weight: 600; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+    .badge-dur { font-size: 0.69rem; font-weight: 700; color: #93c5fd; background: rgba(59,130,246,0.14); padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+    .archive-row-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 0.72rem; color: var(--text-muted); }
+    .meta-highlight { color: #e2e8f0; font-weight: 600; }
+    .meta-soc { color: #34d399; font-weight: 600; }
+
+    .modal-foot { padding: 10px 14px 12px; background: rgba(15,23,42,0.96); border-top: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-shrink: 0; }
+    .modal-foot-note { font-size: 0.68rem; color: var(--text-muted); }
+    .btn-close-footer { padding: 7px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.08); color: #fff; font-family: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+    .btn-close-footer:hover { background: rgba(255,255,255,0.14); }
   </style>
 </head>
 <body>
@@ -444,6 +494,18 @@ export function renderHTML(data) {
           </div>
         </button>
       </div>
+
+      <!-- Кнопка відкриття повного списку подій за останній місяць (30 днів) -->
+      <button id="open-archive-btn" type="button" class="archive-trigger-btn" command="show-modal" commandfor="monthlyEventsDialog" onclick="loadMonthlyArchive()">
+        <span class="archive-trigger-left">
+          <span style="font-size:1.05rem;">📅</span>
+          <span>
+            Всі події за місяць (30 днів)
+            <span class="archive-trigger-sub">Блекаути ДТЕК та захисти напруги списком</span>
+          </span>
+        </span>
+        <span id="archive-btn-pill" class="archive-pill">Список ▸</span>
+      </button>
     </div>
 
     ${ongoingChart ? renderOutageCardHTML(ongoingChart, 'outageGrad_ongoing') : ''}
@@ -489,6 +551,52 @@ export function renderHTML(data) {
       <div style="font-size:0.58rem; opacity:0.35; margin-top:3px; letter-spacing:0.5px;"><span title="Версія системи">v${data.version || '1.2.0'}</span></div>
     </div>
   </div>
+
+  <!-- МОДАЛЬНЕ ВІКНО: СПИСОК ПОДІЙ ЗА 30 ДНІВ -->
+  <dialog id="monthlyEventsDialog" class="archive-modal" closedby="any" aria-labelledby="monthlyDialogTitle">
+    <div class="modal-head">
+      <div class="modal-title-row">
+        <div>
+          <h2 id="monthlyDialogTitle" class="modal-title">📅 Архів подій за 30 днів</h2>
+          <div id="archivePeriodSubtitle" class="modal-subtitle">Завантаження даних за останній місяць...</div>
+        </div>
+        <button type="button" class="modal-close-x" command="close" commandfor="monthlyEventsDialog" aria-label="Закрити вікно">✕</button>
+      </div>
+
+      <div class="modal-kpis">
+        <div class="modal-kpi">
+          <div id="archive-kpi-blackout" class="modal-kpi-val" style="color:#f87171;">—</div>
+          <div class="modal-kpi-lbl">🔴 Блекаути ДТЕК</div>
+        </div>
+        <div class="modal-kpi">
+          <div id="archive-kpi-voltage" class="modal-kpi-val" style="color:#f59e0b;">—</div>
+          <div class="modal-kpi-lbl">⚡ Захист напруги</div>
+        </div>
+        <div class="modal-kpi">
+          <div id="archive-kpi-avg" class="modal-kpi-val" style="color:#34d399;">—</div>
+          <div id="archive-kpi-avg-lbl" class="modal-kpi-lbl">📊 Сер. ДТЕК • мін. АКБ</div>
+        </div>
+      </div>
+
+      <div class="filter-bar" role="group" aria-label="Фільтр подій за типом">
+        <button type="button" id="archive-filter-all" class="filter-chip is-active" data-filter="all" onclick="setArchiveFilter('all')">Усі</button>
+        <button type="button" id="archive-filter-blackout" class="filter-chip" data-filter="blackout" onclick="setArchiveFilter('blackout')">🔴 ДТЕК</button>
+        <button type="button" id="archive-filter-voltage" class="filter-chip" data-filter="voltage" onclick="setArchiveFilter('voltage')">⚡ Напруга</button>
+      </div>
+    </div>
+
+    <div class="modal-body" id="archiveListBody">
+      <div class="archive-status-note">⏳ Завантаження історії подій...</div>
+    </div>
+
+    <div class="modal-foot">
+      <div class="modal-foot-note">Натисніть поза вікном або Esc, щоб закрити</div>
+      <form method="dialog">
+        <button type="submit" class="btn-close-footer" autofocus>Закрити</button>
+      </form>
+    </div>
+  </dialog>
+
   <script>
     function selectJournalTab(tab) {
       const isB = (tab === 'blackout');
@@ -524,6 +632,172 @@ export function renderHTML(data) {
       panelB.classList.toggle('is-hidden', !isB);
       panelV.classList.toggle('is-hidden', isB);
     }
+
+    let archiveState = null;
+    let archiveFilter = 'all';
+    let archiveLoadPromise = null;
+
+    function escHtml(val) {
+      return String(val ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function fmtShortDate(iso) {
+      if (!iso || typeof iso !== 'string') return '';
+      const p = iso.split('-');
+      return p.length === 3 ? (p[2] + '.' + p[1]) : iso;
+    }
+
+    function renderArchiveDialog() {
+      if (!archiveState) return;
+      const period = archiveState.period || {};
+      const summary = archiveState.summary || {};
+      const events = Array.isArray(archiveState.events) ? archiveState.events : [];
+
+      const subEl = document.getElementById('archivePeriodSubtitle');
+      if (subEl) {
+        const range = period.fromDateStr && period.toDateStr
+          ? (fmtShortDate(period.fromDateStr) + ' — ' + fmtShortDate(period.toDateStr))
+          : 'Останні 30 днів';
+        subEl.textContent = range + ' • Завантажено ' + (period.daysAvailable || 0) + ' дн.';
+      }
+
+      const kpiB = document.getElementById('archive-kpi-blackout');
+      const kpiV = document.getElementById('archive-kpi-voltage');
+      const kpiAvg = document.getElementById('archive-kpi-avg');
+      const kpiAvgLbl = document.getElementById('archive-kpi-avg-lbl');
+      if (kpiB) kpiB.innerHTML = (summary.blackoutCount || 0) + ' <small style="font-size:0.68rem; color:var(--text-muted); font-weight:500;">(' + escHtml(summary.blackoutTotalFormatted || '0 хв') + ')</small>';
+      if (kpiV) kpiV.innerHTML = (summary.voltageCount || 0) + ' <small style="font-size:0.68rem; color:var(--text-muted); font-weight:500;">(' + escHtml(summary.voltageTotalFormatted || '0 хв') + ')</small>';
+      if (kpiAvg) kpiAvg.innerHTML = escHtml(summary.avgBlackoutKw || '0.0') + ' <small style="font-size:0.68rem;">кВт</small>';
+      if (kpiAvgLbl) kpiAvgLbl.textContent = '📊 Сер. ДТЕК • мін. ' + (summary.minSoc ?? 100) + '%';
+
+      const pill = document.getElementById('archive-btn-pill');
+      if (pill && typeof summary.totalEvents === 'number') {
+        pill.textContent = summary.totalEvents + ' подій ▸';
+      }
+
+      const fAll = document.getElementById('archive-filter-all');
+      const fB = document.getElementById('archive-filter-blackout');
+      const fV = document.getElementById('archive-filter-voltage');
+      if (fAll) fAll.textContent = 'Усі (' + (summary.totalEvents || 0) + ')';
+      if (fB) fB.textContent = '🔴 ДТЕК (' + (summary.blackoutCount || 0) + ')';
+      if (fV) fV.textContent = '⚡ Напруга (' + (summary.voltageCount || 0) + ')';
+
+      const filtered = archiveFilter === 'all'
+        ? events
+        : events.filter(ev => archiveFilter === 'blackout' ? ev.eventType === 'BLACKOUT' : ev.eventType !== 'BLACKOUT');
+
+      const body = document.getElementById('archiveListBody');
+      if (!body) return;
+
+      const parts = [];
+      if (period.isPartial) {
+        parts.push('<div class="archive-status-note">⏳ Дозавантажуємо архів з хмари Deye (залишилось ' + (period.remainingDays || 0) + ' дн.)...</div>');
+      }
+
+      if (filtered.length === 0) {
+        parts.push('<div style="text-align:center; padding:24px 12px; color:var(--text-muted); font-size:0.82rem;">🟢 За вибраним фільтром подій не зафіксовано.</div>');
+      } else {
+        for (const ev of filtered) {
+          const isBlackout = (ev.eventType === 'BLACKOUT');
+          const rowClass = 'archive-row ' + (isBlackout ? 'type-blackout' : 'type-voltage') + (ev.isOngoing ? ' is-ongoing' : '');
+          const dayPrefix = ev.dayLabel ? '<span class="day">' + escHtml(ev.dayLabel) + ',</span> ' : '';
+          const timeText = ev.isOngoing ? ('з ' + escHtml(ev.start) + ' (триває)') : (escHtml(ev.start) + ' — ' + escHtml(ev.end));
+          const badgeStyle = 'color:' + escHtml(ev.eventBadgeColor || (isBlackout ? '#fca5a5' : '#fcd34d')) + '; background:' + escHtml(ev.eventBadgeBg || 'rgba(245,158,11,0.15)') + ';';
+          const socStr = (ev.socDrain > 0)
+            ? ('🔋 ' + ev.startSoc + '% ➔ ' + ev.minSoc + '% (-' + ev.socDrain + '%)')
+            : ('🔋 ~' + escHtml(ev.energyKwh) + ' кВт·год');
+          parts.push(
+            '<div class="' + rowClass + '">' +
+              '<div class="archive-row-top">' +
+                '<div class="archive-when">' + dayPrefix + '<span>' + timeText + '</span></div>' +
+                '<div class="archive-badges">' +
+                  '<span class="badge-cause" style="' + badgeStyle + '">' + escHtml(ev.eventLabel) + '</span>' +
+                  '<span class="badge-dur">⏳ ' + escHtml(ev.durStr) + '</span>' +
+                '</div>' +
+              '</div>' +
+              '<div class="archive-row-meta">' +
+                '<span>Сер: <span class="meta-highlight">' + escHtml(ev.avgKw) + ' кВт</span> <span style="opacity:0.75;">(пік ' + escHtml(ev.peakKw) + ')</span> • ~' + escHtml(ev.energyKwh) + ' кВт·год</span>' +
+                '<span class="meta-soc">' + socStr + '</span>' +
+              '</div>' +
+            '</div>'
+          );
+        }
+      }
+
+      body.innerHTML = parts.join('');
+    }
+
+    function setArchiveFilter(filter) {
+      archiveFilter = filter;
+      document.querySelectorAll('.filter-chip').forEach(btn => {
+        btn.classList.remove('is-active', 'is-active-b', 'is-active-v');
+        if (btn.getAttribute('data-filter') === filter) {
+          btn.classList.add(filter === 'blackout' ? 'is-active-b' : filter === 'voltage' ? 'is-active-v' : 'is-active');
+        }
+      });
+      renderArchiveDialog();
+    }
+
+    async function fetchArchivePass(depth) {
+      const resp = await fetch('/api/archive');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const nextData = await resp.json();
+      const prevDays = archiveState && archiveState.period ? (archiveState.period.daysAvailable || 0) : -1;
+      archiveState = nextData;
+      renderArchiveDialog();
+      const nextDays = nextData && nextData.period ? (nextData.period.daysAvailable || 0) : 0;
+      if (nextData && nextData.period && nextData.period.isPartial && depth < 3 && nextDays > prevDays) {
+        await fetchArchivePass(depth + 1);
+      }
+    }
+
+    function loadMonthlyArchive() {
+      if (archiveState && !(archiveState.period && archiveState.period.isPartial)) {
+        renderArchiveDialog();
+        return;
+      }
+      if (!archiveLoadPromise) {
+        archiveLoadPromise = fetchArchivePass(0).catch(() => {
+          const body = document.getElementById('archiveListBody');
+          if (body && !archiveState) {
+            body.innerHTML = '<div style="text-align:center; padding:24px 12px; color:#fca5a5; font-size:0.82rem;">⚠️ Не вдалося завантажити архів подій. Спробуйте ще раз.</div>';
+          }
+        }).finally(() => {
+          archiveLoadPromise = null;
+        });
+      }
+    }
+
+    // Progressive enhancement fallbacks (Invoker Commands + Dialog closedby)
+    (function initArchiveDialogEnhancements() {
+      const modal = document.getElementById('monthlyEventsDialog');
+      if (!modal) return;
+      if (!('commandForElement' in HTMLButtonElement.prototype)) {
+        document.querySelectorAll('button[commandfor="monthlyEventsDialog"]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            if (btn.getAttribute('command') === 'close') {
+              if (modal.open) modal.close();
+            } else if (!modal.open && typeof modal.showModal === 'function') {
+              modal.showModal();
+            }
+          });
+        });
+      }
+      if (!('closedBy' in HTMLDialogElement.prototype)) {
+        const outside = (e, d) => {
+          const r = d.getBoundingClientRect();
+          return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+        };
+        let pressedOutside = false;
+        modal.addEventListener('pointerdown', (e) => { pressedOutside = outside(e, modal); });
+        modal.addEventListener('pointerup', (e) => { if (pressedOutside && outside(e, modal)) modal.close(); });
+      }
+    })();
 
     setTimeout(() => location.reload(), 300000);
   </script>

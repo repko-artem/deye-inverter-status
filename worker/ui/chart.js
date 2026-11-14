@@ -1,30 +1,14 @@
 import { CONFIG } from '../config.js';
-import { formatKyivTime } from '../domain/time.js';
+import { summarizeOutageMetrics } from '../domain/outages.js';
 
 /**
  * Побудова SVG графіка споживання та рівня заряду АКБ для події відключення.
  */
 export function buildOutageChart(e, records, eventNumber, config = CONFIG) {
-  const startIdx = Math.max(0, e.startIndex);
-  const endIdx = Math.min(records.length - 1, e.endIndex ?? (records.length - 1));
-  const rawSlice = records.slice(startIdx, endIdx + 1);
-  if (!rawSlice || rawSlice.length === 0) return null;
+  const computed = summarizeOutageMetrics(e, records, { includeSeries: true });
+  if (!computed) return null;
 
-  const points = rawSlice.map(r => {
-    const time = formatKyivTime(r.dateTime);
-    const useKw = Math.max(0, (r.usePower || 0) / 1000.0);
-    const soc = Math.round(r.batterySoc || 75);
-    return { time, useKw, soc };
-  });
-
-  const avgKwVal = points.reduce((sum, p) => sum + p.useKw, 0) / points.length;
-  const avgKw = avgKwVal.toFixed(1);
-
-  let peakPoint = points[0];
-  for (const p of points) {
-    if (p.useKw > peakPoint.useKw) peakPoint = p;
-  }
-  const peakKw = peakPoint.useKw.toFixed(1);
+  const { summary, points, avgKwVal, peakPoint, peakIdx } = computed;
 
   // SVG Chart: ViewBox 0 0 520 175
   const xStart = 35, xEnd = 505, yTop = 22, yBottom = 145;
@@ -57,7 +41,6 @@ export function buildOutageChart(e, records, eventNumber, config = CONFIG) {
   areaD += ` L ${getX(points.length - 1)} ${yBottom} Z`;
 
   // Координати піка
-  const peakIdx = points.indexOf(peakPoint);
   const peakX = getX(peakIdx);
   const peakY = getYPower(peakPoint.useKw);
 
@@ -81,35 +64,9 @@ export function buildOutageChart(e, records, eventNumber, config = CONFIG) {
     return `<text x="${xPos}" y="162" fill="#94a3b8" font-size="8.5" text-anchor="${anchor}">${p.time}</text>`;
   }).join('');
 
-  const durStr = e.durationMin >= 60 
-    ? `${Math.floor(e.durationMin / 60)} год ${e.durationMin % 60} хв` 
-    : `${e.durationMin} хв`;
-
-  const energyKwh = (rawSlice.reduce((sum, r) => {
-    const dis = Math.max(0, (r.dischargePower || r.batteryPower || r.usePower || 0));
-    return sum + (dis / 1000.0) * (5 / 60.0);
-  }, 0)).toFixed(1);
-
   return {
     eventNum: eventNumber,
-    eventType: e.eventType || 'BLACKOUT',
-    eventLabel: e.eventLabel || '🔴 Відключення ДТЕК',
-    eventBadgeColor: e.eventBadgeColor || '#ef4444',
-    eventBadgeBg: e.eventBadgeBg || 'rgba(239, 68, 68, 0.15)',
-    eventDescription: e.eventDescription || '',
-    isOngoing: e.isOngoing || false,
-    dayLabel: e.dayLabel || "",
-    start: e.start,
-    end: e.end,
-    durStr,
-    durationMin: e.durationMin,
-    startSoc: e.startSoc,
-    minSoc: e.minSoc,
-    socDrain: Math.max(0, e.startSoc - e.minSoc),
-    energyKwh,
-    avgKw,
-    peakKw,
-    peakTime: peakPoint.time,
+    ...summary,
     peakX,
     peakY,
     yAvg,

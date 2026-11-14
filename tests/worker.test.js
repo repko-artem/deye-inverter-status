@@ -1496,3 +1496,114 @@ describe('Error 1101 Cross-Request Promise Protection (v1.6.4)', () => {
     }
   });
 });
+
+describe('30-Day Monthly Archive API & Modal UI (v1.7.0)', () => {
+  test('GET /api/archive backfills 30 past days in two safe batches, caches in KV, and classifies events newest-first', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    try {
+      const kv = createMockKV();
+      const nowSec = Math.floor(Date.now() / 1000);
+      const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Kyiv' }).format(new Date(nowSec * 1000));
+      const [yToday, mToday, dToday] = todayKey.split('-').map(Number);
+
+      const historyDaysCalled = new Set();
+      globalThis.fetch = async (url) => {
+        const parsed = new URL(url.toString());
+        if (parsed.pathname.includes('/stats/daily')) {
+          const year = Number(parsed.searchParams.get('year'));
+          const month = Number(parsed.searchParams.get('month'));
+          const day = Number(parsed.searchParams.get('day'));
+          const dayKey = `${year}-${month}-${day}`;
+          const isToday = (year === yToday && month === mToday && day === dToday);
+          if (!isToday) historyDaysCalled.add(dayKey);
+
+          const baseTs = Math.floor(Date.UTC(year, month - 1, day, 10, 0, 0) / 1000);
+          if (isToday) {
+            return new Response(JSON.stringify({
+              records: [
+                { dateTime: nowSec - 1800, wirePower: 8000, batteryPower: 0, usePower: 8000, batterySoc: 100 },
+                { dateTime: nowSec - 1500, wirePower: 0, batteryPower: 5200, usePower: 5200, batterySoc: 99 },
+                { dateTime: nowSec - 1200, wirePower: 0, batteryPower: 5000, usePower: 5000, batterySoc: 98 },
+                { dateTime: nowSec - 900, wirePower: 9000, batteryPower: 0, usePower: 8500, batterySoc: 98 }
+              ]
+            }));
+          }
+          return new Response(JSON.stringify({
+            records: day % 12 === 0 ? [
+              { dateTime: baseTs, wirePower: 8000, batteryPower: 0, usePower: 8000, batterySoc: 100 },
+              { dateTime: baseTs + 300, wirePower: 0, batteryPower: 7500, usePower: 7500, batterySoc: 90 },
+              { dateTime: baseTs + 1800, wirePower: 0, batteryPower: 7500, usePower: 7500, batterySoc: 72 },
+              { dateTime: baseTs + 2100, wirePower: 8500, batteryPower: 0, usePower: 8200, batterySoc: 72 }
+            ] : [
+              { dateTime: baseTs, wirePower: 8000, batteryPower: 0, usePower: 8000, batterySoc: 100 }
+            ]
+          }));
+        }
+        return new Response(JSON.stringify([]));
+      };
+
+      const env = { DEYE_TOKEN: 't', DEYE_STATION_ID: 's', NOTIFY_KV: kv };
+      const ctx = { waitUntil() {} };
+
+      // Pass 1: loads first 15 past days -> isPartial=true and Cache-Control=no-store
+      const res1 = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/archive'), env, ctx);
+      assert.equal(res1.status, 200);
+      assert.equal(res1.headers.get('Cache-Control'), 'no-store');
+      const data1 = await res1.json();
+      assert.equal(data1.period.isPartial, true);
+      assert.equal(data1.period.remainingDays, 15);
+      assert.equal(historyDaysCalled.size, 15);
+
+      // Pass 2: loads remaining 15 past days -> isPartial=false and Cache-Control public max-age=120
+      const res2 = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/archive'), env, ctx);
+      assert.equal(res2.status, 200);
+      assert.match(res2.headers.get('Cache-Control'), /max-age=120/);
+      const data2 = await res2.json();
+      assert.equal(data2.period.isPartial, false);
+      assert.equal(data2.period.remainingDays, 0);
+      assert.equal(historyDaysCalled.size, 30);
+      assert.ok(data2.summary.totalEvents >= 2, 'Should aggregate blackouts and voltage events across 30 days');
+      assert.ok(data2.summary.blackoutCount >= 1);
+      assert.ok(data2.summary.voltageCount >= 1);
+      assert.ok(data2.events[0].startTimestampSec >= data2.events[data2.events.length - 1].startTimestampSec, 'Events must be sorted newest-first');
+
+      // Pass 3: served from KV with 0 additional past-day API calls
+      historyDaysCalled.clear();
+      const res3 = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/archive'), env, ctx);
+      assert.equal(res3.status, 200);
+      assert.equal(historyDaysCalled.size, 0, 'Cached 30-day archive in KV must make 0 past-day API calls');
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalCache.clear();
+    }
+  });
+
+  test('renderHTML includes 30-day archive button, native modal dialog with closedby="any", and scroll containment CSS', () => {
+    const html = renderHTML({
+      battery_soc: 92,
+      battery_voltage: 644,
+      is_grid_on: true,
+      use_power_kw: 4.5,
+      grid_power_kw: 4.5,
+      charge_power_kw: 0,
+      battery_power_kw: 0,
+      discharge_24h_kwh: '12.0',
+      est_hours_formatted: '9 год',
+      est_time_until: '—',
+      full_est_hours_formatted: '9 год',
+      stat_active_kw: '7.5',
+      stat_night_kw: '6.5',
+      updated_at: '18:30',
+      journal: { count: 0, blackoutCount24h: 0, blackoutCountTotal: 0, voltageSagCount24h: 0, voltageSagCountTotal: 0 },
+      blackout_outages: [],
+      voltage_outages: []
+    });
+
+    assert.ok(html.includes('id="open-archive-btn"'), 'Should render monthly archive trigger button');
+    assert.ok(html.includes('command="show-modal" commandfor="monthlyEventsDialog"'), 'Button should wire native invoker command');
+    assert.ok(html.includes('<dialog id="monthlyEventsDialog" class="archive-modal" closedby="any"'), 'Should render native modal dialog with closedby="any"');
+    assert.ok(html.includes('overscroll-behavior: contain'), 'Should include scroll containment CSS for modal and backdrop');
+    assert.ok(html.includes('/api/archive'), 'Client script should fetch /api/archive lazily on open');
+  });
+});

@@ -10,6 +10,18 @@ import {
 } from './time.js';
 
 /**
+ * Форматування тривалості у хвилинах українською ("2 год 15 хв" або "20 хв").
+ * @param {number} totalMinutes
+ * @returns {string}
+ */
+export function formatDurationUk(totalMinutes) {
+  const mins = Math.max(0, Math.round(totalMinutes || 0));
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h > 0 ? `${h} год ${m} хв` : `${m} хв`;
+}
+
+/**
  * Типи подій живлення
  */
 export const OutageType = Object.freeze({
@@ -282,9 +294,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG) {
     return sum + Math.max(0, Math.round((endSec - startSec) / 60));
   }, 0);
 
-  const totalH24 = Math.floor(totalMin24h / 60);
-  const totalM24 = totalMin24h % 60;
-  const totalHours24hFormatted = totalH24 > 0 ? `${totalH24} год ${totalM24} хв` : `${totalM24} хв`;
+  const totalHours24hFormatted = formatDurationUk(totalMin24h);
 
   const blackoutsIn24h = outagesIn24h.filter(e => e.eventType === OutageType.BLACKOUT);
   const voltageSagsIn24h = outagesIn24h.filter(e => e.eventType === OutageType.VOLTAGE_SAG);
@@ -400,5 +410,136 @@ export function calculateOutageStatistics(multiDayRecords = [], config = CONFIG,
   return {
     statActiveKw,
     statNightKw
+  };
+}
+
+/**
+ * Єдиний розрахунок метрик окремої події відключення (без побудови SVG) — використовується як у графіках, так і в 30-денному архіві.
+ */
+export function summarizeOutageMetrics(e, records, { includeSeries = false } = {}) {
+  if (!e || !Array.isArray(records) || records.length === 0) return null;
+
+  const startIdx = Math.max(0, e.startIndex ?? 0);
+  const endIdx = Math.min(records.length - 1, e.endIndex ?? (records.length - 1));
+  const rawSlice = records.slice(startIdx, endIdx + 1);
+  if (rawSlice.length === 0) return null;
+
+  const points = rawSlice.map(r => ({
+    time: formatKyivTime(r.dateTime),
+    useKw: Math.max(0, (r.usePower || 0) / 1000.0),
+    soc: Math.round(r.batterySoc || 75)
+  }));
+
+  const avgKwVal = points.reduce((sum, p) => sum + p.useKw, 0) / points.length;
+  let peakPoint = points[0];
+  let peakIdx = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].useKw > peakPoint.useKw) {
+      peakPoint = points[i];
+      peakIdx = i;
+    }
+  }
+
+  const energyKwh = (rawSlice.reduce((sum, r) => {
+    const dis = Math.max(0, (r.dischargePower || r.batteryPower || r.usePower || 0));
+    return sum + (dis / 1000.0) * (5 / 60.0);
+  }, 0)).toFixed(1);
+
+  const startSoc = e.startSoc ?? points[0].soc;
+  const minSoc = e.minSoc ?? Math.min(...points.map(p => p.soc));
+
+  const summary = {
+    eventType: e.eventType || OutageType.BLACKOUT,
+    voltageCause: e.voltageCause || e.eventType || OutageType.BLACKOUT,
+    eventLabel: e.eventLabel || '🔴 Відключення ДТЕК',
+    eventBadgeColor: e.eventBadgeColor || '#ef4444',
+    eventBadgeBg: e.eventBadgeBg || 'rgba(239, 68, 68, 0.15)',
+    eventDescription: e.eventDescription || '',
+    isOngoing: Boolean(e.isOngoing),
+    dateStr: e.dateStr || '',
+    dayLabel: e.dayLabel || '',
+    start: e.start,
+    end: e.end,
+    startTimestampSec: e.startTimestampSec,
+    endTimestampSec: e.endTimestampSec,
+    durStr: formatDurationUk(e.durationMin),
+    durationMin: e.durationMin || 0,
+    startSoc,
+    minSoc,
+    socDrain: Math.max(0, startSoc - minSoc),
+    energyKwh,
+    avgKw: avgKwVal.toFixed(1),
+    peakKw: peakPoint.useKw.toFixed(1),
+    peakTime: peakPoint.time
+  };
+
+  if (includeSeries) {
+    return { summary, points, avgKwVal, peakPoint, peakIdx };
+  }
+  return summary;
+}
+
+/**
+ * Формує зведення та список подій для API /api/archive за останній місяць.
+ */
+export function buildArchiveResponse({
+  events = [],
+  records = [],
+  daysAvailable = 0,
+  daysRequested = 30,
+  remainingDays = 0,
+  fromDateStr = '',
+  toDateStr = ''
+}) {
+  const archivedEvents = [...events]
+    .reverse()
+    .map(ev => summarizeOutageMetrics(ev, records))
+    .filter(Boolean);
+
+  let blackoutCount = 0;
+  let blackoutTotalMin = 0;
+  let blackoutWeightedKwSum = 0;
+  let voltageCount = 0;
+  let voltageTotalMin = 0;
+  let minSoc = 100;
+
+  for (const ev of archivedEvents) {
+    const dur = Math.max(1, ev.durationMin || 0);
+    if (ev.minSoc < minSoc) minSoc = ev.minSoc;
+    if (ev.eventType === OutageType.BLACKOUT) {
+      blackoutCount += 1;
+      blackoutTotalMin += ev.durationMin || 0;
+      blackoutWeightedKwSum += parseFloat(ev.avgKw || '0') * dur;
+    } else {
+      voltageCount += 1;
+      voltageTotalMin += ev.durationMin || 0;
+    }
+  }
+
+  const blackoutWeightTotal = archivedEvents
+    .filter(ev => ev.eventType === OutageType.BLACKOUT)
+    .reduce((sum, ev) => sum + Math.max(1, ev.durationMin || 0), 0);
+
+  return {
+    period: {
+      fromDateStr,
+      toDateStr,
+      daysRequested,
+      daysAvailable,
+      remainingDays,
+      isPartial: remainingDays > 0
+    },
+    summary: {
+      totalEvents: archivedEvents.length,
+      blackoutCount,
+      blackoutTotalMin,
+      blackoutTotalFormatted: formatDurationUk(blackoutTotalMin),
+      voltageCount,
+      voltageTotalMin,
+      voltageTotalFormatted: formatDurationUk(voltageTotalMin),
+      avgBlackoutKw: blackoutWeightTotal > 0 ? (blackoutWeightedKwSum / blackoutWeightTotal).toFixed(1) : '0.0',
+      minSoc: archivedEvents.length > 0 ? minSoc : 100
+    },
+    events: archivedEvents
   };
 }

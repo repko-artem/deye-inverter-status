@@ -2,7 +2,7 @@ import { CONFIG } from '../config.js';
 import { DeyeClient } from './deye-client.js';
 import { globalCache } from './cache.js';
 import { calculateAutonomy, calculateDischargeRate, calculate24hDischarge } from '../domain/autonomy.js';
-import { analyzeMultiDayOutages, calculateOutageStatistics, OutageType } from '../domain/outages.js';
+import { analyzeMultiDayOutages, calculateOutageStatistics, buildArchiveResponse, OutageType } from '../domain/outages.js';
 import { buildOutageChart } from '../ui/chart.js';
 import { resolveSystemState } from '../domain/system-state.js';
 import { nowUtcSec, formatKyivTime, formatKyivDate } from '../domain/time.js';
@@ -174,6 +174,52 @@ export class TelemetryService {
     this.client = new DeyeClient(apiBase, token, stationId);
   }
 
+  /**
+   * Батч-завантаження вказаних минулих днів із Deye Cloud (+ пофазної напруги пристрою).
+   */
+  async fetchDaysBatch(daysList, { concurrency = 1, cacheInMemory = false, recordEmptySuccess = false } = {}) {
+    const recordsByKey = {};
+    const daysFetched = [];
+
+    for (let i = 0; i < daysList.length; i += concurrency) {
+      const batch = daysList.slice(i, i + concurrency);
+      const batchResults = await Promise.all(
+        batch.map(async (pd) => {
+          try {
+            const [json, voltageSeries] = await Promise.all([
+              this.client.getDailyBatteryHistory(pd.y, pd.m, pd.day),
+              this.deviceId
+                ? this.client.getDailyDeviceVoltages(this.deviceId, pd.y, pd.m, pd.day).catch(() => [])
+                : Promise.resolve([])
+            ]);
+            return { pd, json, voltageSeries };
+          } catch (err) {
+            console.error(`Error fetching history for ${pd.key}:`, err);
+            return { pd, json: null, voltageSeries: [] };
+          }
+        })
+      );
+
+      for (const { pd, json, voltageSeries } of batchResults) {
+        daysFetched.push(pd.key);
+        if (json && Array.isArray(json.records) && json.records.length > 0) {
+          if (Array.isArray(voltageSeries) && voltageSeries.length > 0) {
+            mergeDeviceVoltagesIntoRecords(json.records, voltageSeries);
+          }
+          const compacted = json.records.map(compactHistoryRecord);
+          recordsByKey[pd.key] = compacted;
+          if (cacheInMemory) {
+            this.cache.setDayRecords(pd.key, compacted);
+          }
+        } else if (recordEmptySuccess && json && Array.isArray(json.records)) {
+          recordsByKey[pd.key] = [];
+        }
+      }
+    }
+
+    return { recordsByKey, daysFetched };
+  }
+
   async getTelemetry() {
     const currentUtcSec = nowUtcSec();
     const nowStr = formatKyivTime(currentUtcSec);
@@ -219,39 +265,11 @@ export class TelemetryService {
 
       // 3. Довантаження відсутніх днів батчами з обмеженням паралельності (<= 6 з'єднань CF)
       const concurrency = this.deviceId ? 1 : (this.config.CACHE?.HISTORY_CONCURRENCY || 3);
-      const daysFetched = [];
-      let fetchedAnyPastDay = false;
-
-      for (let i = 0; i < missingPastDays.length; i += concurrency) {
-        const batch = missingPastDays.slice(i, i + concurrency);
-        const batchResults = await Promise.all(
-          batch.map(async (pd) => {
-            try {
-              const [json, voltageSeries] = await Promise.all([
-                this.client.getDailyBatteryHistory(pd.y, pd.m, pd.day),
-                this.deviceId
-                  ? this.client.getDailyDeviceVoltages(this.deviceId, pd.y, pd.m, pd.day).catch(() => [])
-                  : Promise.resolve([])
-              ]);
-              return { pd, json, voltageSeries };
-            } catch (err) {
-              console.error(`Error fetching history for ${pd.key}:`, err);
-              return { pd, json: null, voltageSeries: [] };
-            }
-          })
-        );
-        for (const { pd, json, voltageSeries } of batchResults) {
-          daysFetched.push(pd.key);
-          if (json && Array.isArray(json.records) && json.records.length > 0) {
-            if (Array.isArray(voltageSeries) && voltageSeries.length > 0) {
-              mergeDeviceVoltagesIntoRecords(json.records, voltageSeries);
-            }
-            const compacted = json.records.map(compactHistoryRecord);
-            this.cache.setDayRecords(pd.key, compacted);
-            fetchedAnyPastDay = true;
-          }
-        }
-      }
+      const { recordsByKey: fetchedMap, daysFetched } = await this.fetchDaysBatch(missingPastDays, {
+        concurrency,
+        cacheInMemory: true
+      });
+      const fetchedAnyPastDay = Object.keys(fetchedMap).length > 0;
 
       if (fetchedAnyPastDay && kv) {
         try {
@@ -563,5 +581,130 @@ export class TelemetryService {
         outages: []
       };
     }
+  }
+
+  /**
+   * Повертає 30-денний архів подій (блекаути ДТЕК та захисти напруги) з інкрементальним KV-кешем
+   * і лімітованим довантаженням за один запит (у межах квоти підзапитів Cloudflare Workers).
+   */
+  async getOutageArchive({
+    days = this.config.CACHE?.ARCHIVE_DAYS || 30,
+    maxBatchDays = this.config.CACHE?.ARCHIVE_BATCH_DAYS || 15
+  } = {}) {
+    const currentUtcSec = nowUtcSec();
+    const todayDateStr = formatKyivDate(currentUtcSec);
+    const fromDateStr = formatKyivDate(currentUtcSec - days * 86400);
+    const [yToday, mToday, dToday] = todayDateStr.split('-').map(Number);
+    const pastDays = getPastDaysList(currentUtcSec, days);
+    const validKeys = new Set(pastDays.map(pd => pd.key));
+
+    const kv = this.env && this.env.NOTIFY_KV;
+    const archiveKvKey = this.deviceId ? 'history_archive_30d_v2' : 'history_archive_30d_v1';
+    const pastHistoryKvKey = this.deviceId ? 'history_past_days_v2' : 'history_past_days';
+
+    let archiveDaysMap = {};
+    let archiveDirty = false;
+
+    if (kv) {
+      try {
+        const stored = await kv.get(archiveKvKey, { type: 'json' });
+        if (stored && typeof stored === 'object') {
+          for (const key of Object.keys(stored)) {
+            if (validKeys.has(key) && Array.isArray(stored[key])) {
+              archiveDaysMap[key] = stored[key];
+            } else {
+              archiveDirty = true; // Прибираємо застарілі дні (> 30 діб)
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to read ${archiveKvKey} from KV:`, err);
+      }
+    }
+
+    // Досіваємо вже закешовані в пам'яті або KV останні 7 днів без виклику Deye API
+    for (const pd of pastDays) {
+      if (!Array.isArray(archiveDaysMap[pd.key])) {
+        const memRecs = this.cache.getDayRecords(pd.key);
+        if (Array.isArray(memRecs) && memRecs.length > 0) {
+          archiveDaysMap[pd.key] = memRecs;
+          archiveDirty = true;
+        }
+      }
+    }
+
+    const recentMissing = pastDays.slice(0, this.config.CACHE?.HISTORY_DAYS || 7)
+      .filter(pd => !Array.isArray(archiveDaysMap[pd.key]));
+    if (recentMissing.length > 0 && kv) {
+      try {
+        const kvRecent = await kv.get(pastHistoryKvKey, { type: 'json' });
+        if (kvRecent && typeof kvRecent === 'object') {
+          for (const pd of recentMissing) {
+            if (Array.isArray(kvRecent[pd.key]) && kvRecent[pd.key].length > 0) {
+              archiveDaysMap[pd.key] = kvRecent[pd.key];
+              archiveDirty = true;
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`Failed to read ${pastHistoryKvKey} for archive seed:`, err);
+      }
+    }
+
+    // Паралельно тягнемо сьогоднішню історію та порцію відсутніх днів (до maxBatchDays)
+    const missingDays = pastDays.filter(pd => !Array.isArray(archiveDaysMap[pd.key]));
+    const batchDays = missingDays.slice(0, Math.max(0, maxBatchDays));
+
+    const histTodayPromise = this.client.getDailyBatteryHistory(yToday, mToday, dToday).catch(() => null);
+    const todayVoltagesPromise = this.deviceId
+      ? this.client.getDailyDeviceVoltages(this.deviceId, yToday, mToday, dToday).catch(() => [])
+      : Promise.resolve([]);
+
+    if (batchDays.length > 0) {
+      const concurrency = this.deviceId ? 2 : 3;
+      const { recordsByKey } = await this.fetchDaysBatch(batchDays, {
+        concurrency,
+        cacheInMemory: false,
+        recordEmptySuccess: true
+      });
+      for (const [k, recs] of Object.entries(recordsByKey)) {
+        archiveDaysMap[k] = recs;
+        archiveDirty = true;
+      }
+    }
+
+    if (archiveDirty && kv) {
+      try {
+        await kv.put(archiveKvKey, JSON.stringify(archiveDaysMap));
+      } catch (err) {
+        console.error(`Failed to save ${archiveKvKey} to KV:`, err);
+      }
+    }
+
+    const [histToday, todayVoltages] = await Promise.all([histTodayPromise, todayVoltagesPromise]);
+    const todayRecords = (histToday && Array.isArray(histToday.records))
+      ? histToday.records.map(r => ({ ...r }))
+      : [];
+    mergeDeviceVoltagesIntoRecords(todayRecords, todayVoltages);
+
+    const pastChronological = [...pastDays]
+      .reverse()
+      .flatMap(pd => archiveDaysMap[pd.key] || []);
+    const allRecords = [...pastChronological, ...todayRecords];
+
+    const journal = analyzeMultiDayOutages(allRecords, currentUtcSec, this.config);
+    const daysLoadedPast = pastDays.filter(pd => Array.isArray(archiveDaysMap[pd.key])).length;
+    const daysAvailable = daysLoadedPast + (todayRecords.length > 0 ? 1 : 0);
+    const remainingAfterFetch = Math.max(0, pastDays.length - daysLoadedPast);
+
+    return buildArchiveResponse({
+      events: journal.validEvents || [],
+      records: allRecords,
+      daysAvailable,
+      daysRequested: days,
+      remainingDays: remainingAfterFetch,
+      fromDateStr,
+      toDateStr: todayDateStr
+    });
   }
 }
