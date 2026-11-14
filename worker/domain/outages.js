@@ -502,10 +502,13 @@ export function buildArchiveResponse({
   let voltageCount = 0;
   let voltageTotalMin = 0;
   let minSoc = 100;
+  let maxPeakKw = 0;
 
   for (const ev of archivedEvents) {
     const dur = Math.max(1, ev.durationMin || 0);
     if (ev.minSoc < minSoc) minSoc = ev.minSoc;
+    const pk = parseFloat(ev.peakKw || '0');
+    if (pk > maxPeakKw) maxPeakKw = pk;
     if (ev.eventType === OutageType.BLACKOUT) {
       blackoutCount += 1;
       blackoutTotalMin += ev.durationMin || 0;
@@ -538,6 +541,7 @@ export function buildArchiveResponse({
       voltageTotalMin,
       voltageTotalFormatted: formatDurationUk(voltageTotalMin),
       avgBlackoutKw: blackoutWeightTotal > 0 ? (blackoutWeightedKwSum / blackoutWeightTotal).toFixed(1) : '0.0',
+      maxPeakKw: archivedEvents.length > 0 ? maxPeakKw.toFixed(1) : '0.0',
       minSoc: archivedEvents.length > 0 ? minSoc : 100
     },
     events: archivedEvents

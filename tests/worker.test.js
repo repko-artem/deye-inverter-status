@@ -1566,13 +1566,25 @@ describe('30-Day Monthly Archive API & Modal UI (v1.7.0)', () => {
       assert.ok(data2.summary.totalEvents >= 2, 'Should aggregate blackouts and voltage events across 30 days');
       assert.ok(data2.summary.blackoutCount >= 1);
       assert.ok(data2.summary.voltageCount >= 1);
+      assert.ok(parseFloat(data2.summary.maxPeakKw) > 0, 'Summary must include monthly maxPeakKw');
       assert.ok(data2.events[0].startTimestampSec >= data2.events[data2.events.length - 1].startTimestampSec, 'Events must be sorted newest-first');
 
-      // Pass 3: served from KV with 0 additional past-day API calls
+      // Pass 3: served from in-memory archive cache with 0 API calls (and bypass on ?fresh=1 reads KV)
       historyDaysCalled.clear();
+      let totalFetchCalls = 0;
+      const wrappedFetch = globalThis.fetch;
+      globalThis.fetch = async (...args) => {
+        totalFetchCalls += 1;
+        return wrappedFetch(...args);
+      };
       const res3 = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/archive'), env, ctx);
       assert.equal(res3.status, 200);
-      assert.equal(historyDaysCalled.size, 0, 'Cached 30-day archive in KV must make 0 past-day API calls');
+      assert.equal(totalFetchCalls, 0, 'Fresh in-memory archive cache must serve with 0 upstream API calls');
+
+      const res4 = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/archive?fresh=1'), env, ctx);
+      assert.equal(res4.status, 200);
+      assert.equal(historyDaysCalled.size, 0, 'Cached 30-day archive in KV must make 0 past-day API calls even on ?fresh=1');
+      assert.ok(totalFetchCalls >= 1, '?fresh=1 should refresh today data bypassing in-memory archive TTL');
     } finally {
       globalThis.fetch = originalFetch;
       globalCache.clear();
@@ -1604,6 +1616,10 @@ describe('30-Day Monthly Archive API & Modal UI (v1.7.0)', () => {
     assert.ok(html.includes('command="show-modal" commandfor="monthlyEventsDialog"'), 'Button should wire native invoker command');
     assert.ok(html.includes('<dialog id="monthlyEventsDialog" class="archive-modal" closedby="any"'), 'Should render native modal dialog with closedby="any"');
     assert.ok(html.includes('overscroll-behavior: contain'), 'Should include scroll containment CSS for modal and backdrop');
+    assert.ok(html.includes('grid-template-rows: subgrid'), 'Should align symmetric archive cards via CSS subgrid');
+    assert.ok(html.includes('content-visibility: auto'), 'Should defer off-screen archive cards via content-visibility');
+    assert.ok(html.includes('ARCHIVE_CLIENT_TTL_MS'), 'Should cache archive response client-side with TTL');
+    assert.ok(html.includes('id="archive-kpi-extremum"'), 'Should render 4 balanced KPI cards');
     assert.ok(html.includes('/api/archive'), 'Client script should fetch /api/archive lazily on open');
   });
 });

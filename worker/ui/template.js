@@ -255,7 +255,7 @@ export function renderHTML(data) {
     .footer { text-align: center; font-size: 0.75rem; color: var(--text-muted); padding: 12px 0; }
     .btn { background: rgba(255,255,255,0.08); border: 1px solid var(--card-border); color: #fff; padding: 7px 14px; border-radius: 10px; cursor: pointer; font-weight: 600; margin-top: 6px; font-size: 0.75rem; }
 
-    /* MONTHLY ARCHIVE TRIGGER & NATIVE MODAL DIALOG */
+    /* MONTHLY ARCHIVE TRIGGER & NATIVE MODAL DIALOG (Responsive + Symmetric Subgrid) */
     .archive-trigger-btn { width: 100%; margin-top: 9px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 13px; border-radius: 12px; background: linear-gradient(135deg, rgba(59,130,246,0.16), rgba(30,41,59,0.85)); border: 1px solid rgba(96,165,250,0.35); color: var(--text-main); font-family: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: transform 0.12s ease, border-color 0.18s ease, background 0.18s ease; }
     .archive-trigger-btn:hover { border-color: rgba(96,165,250,0.7); background: linear-gradient(135deg, rgba(59,130,246,0.25), rgba(30,41,59,0.92)); }
     .archive-trigger-btn:active { transform: scale(0.99); }
@@ -263,47 +263,76 @@ export function renderHTML(data) {
     .archive-trigger-sub { display: block; font-size: 0.68rem; font-weight: 400; color: var(--text-muted); margin-top: 1px; }
     .archive-pill { display: inline-flex; align-items: center; gap: 5px; background: rgba(59,130,246,0.2); border: 1px solid rgba(96,165,250,0.35); color: #93c5fd; padding: 4px 9px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; flex-shrink: 0; }
 
-    dialog.archive-modal { margin: auto; width: calc(100vw - 24px); max-width: 480px; max-height: min(86vh, 720px); padding: 0; border: 1px solid rgba(255,255,255,0.14); border-radius: 22px; background: #0f172a; color: var(--text-main); box-shadow: 0 24px 60px rgba(0,0,0,0.65); overflow: hidden; }
+    dialog.archive-modal { margin: auto; width: calc(100vw - 20px); max-width: min(94vw, 1140px); max-height: min(88vh, 860px); padding: 0; border: 1px solid rgba(255,255,255,0.14); border-radius: 22px; background: #0f172a; color: var(--text-main); box-shadow: 0 24px 64px rgba(0,0,0,0.68); overflow: hidden; }
     dialog.archive-modal[open] { display: flex; flex-direction: column; }
     dialog.archive-modal:modal { overscroll-behavior: contain; }
-    dialog.archive-modal::backdrop { background: rgba(2,6,23,0.74); backdrop-filter: blur(5px); overflow: hidden; overscroll-behavior: contain; }
+    dialog.archive-modal::backdrop { background: rgba(2,6,23,0.76); backdrop-filter: blur(6px); overflow: hidden; overscroll-behavior: contain; }
 
-    .modal-head { padding: 15px 16px 12px; background: rgba(15,23,42,0.96); border-bottom: 1px solid rgba(255,255,255,0.08); flex-shrink: 0; }
-    .modal-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-    .modal-title { font-size: 1rem; font-weight: 700; line-height: 1.25; }
-    .modal-subtitle { font-size: 0.72rem; color: var(--text-muted); margin-top: 2px; }
+    .modal-head { padding: 14px 16px 12px; background: rgba(15,23,42,0.97); border-bottom: 1px solid rgba(255,255,255,0.08); flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }
+    .modal-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .modal-title { font-size: 1.02rem; font-weight: 700; line-height: 1.25; }
+    .modal-subtitle { font-size: 0.73rem; color: var(--text-muted); margin-top: 2px; }
     .modal-close-x { width: 32px; height: 32px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(30,41,59,0.8); color: var(--text-muted); font-size: 1rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: color 0.15s ease, background 0.15s ease; }
     .modal-close-x:hover { color: #fff; background: rgba(239,68,68,0.25); border-color: rgba(239,68,68,0.45); }
-    .modal-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 11px; }
-    .modal-kpi { background: rgba(30,41,59,0.6); border: 1px solid rgba(255,255,255,0.06); border-radius: 11px; padding: 7px 6px; text-align: center; }
-    .modal-kpi-val { font-size: 0.86rem; font-weight: 700; }
-    .modal-kpi-lbl { font-size: 0.65rem; color: var(--text-muted); margin-top: 1px; }
-    .filter-bar { display: flex; gap: 6px; margin-top: 10px; }
-    .filter-chip { flex: 1; padding: 6px 8px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.1); background: rgba(30,41,59,0.55); color: var(--text-muted); font-family: inherit; font-size: 0.73rem; font-weight: 600; cursor: pointer; transition: all 0.15s ease; text-align: center; }
+
+    .modal-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .modal-kpi { background: rgba(30,41,59,0.62); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 8px 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 2px; }
+    .modal-kpi-val { font-size: 0.95rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+    .modal-kpi-sub { font-size: 0.69rem; color: #cbd5e1; font-weight: 500; font-variant-numeric: tabular-nums; }
+    .modal-kpi-lbl { font-size: 0.66rem; color: var(--text-muted); }
+
+    .filter-bar { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+    .filter-chip { padding: 7px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); background: rgba(30,41,59,0.55); color: var(--text-muted); font-family: inherit; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.15s ease; text-align: center; white-space: nowrap; }
     .filter-chip.is-active { background: rgba(59,130,246,0.22); border-color: rgba(96,165,250,0.65); color: #eff6ff; }
     .filter-chip.is-active-b { background: rgba(239,68,68,0.18); border-color: rgba(239,68,68,0.65); color: #fecaca; }
     .filter-chip.is-active-v { background: rgba(245,158,11,0.18); border-color: rgba(245,158,11,0.65); color: #fde68a; }
 
-    .modal-body { padding: 10px 14px 14px; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px; flex: 1; }
-    .archive-status-note { font-size: 0.72rem; color: #93c5fd; background: rgba(59,130,246,0.12); border: 1px solid rgba(96,165,250,0.28); border-radius: 10px; padding: 7px 10px; text-align: center; }
-    .archive-row { background: rgba(30,41,59,0.58); border: 1px solid rgba(255,255,255,0.07); border-left-width: 3.5px; border-radius: 13px; padding: 9px 11px; display: flex; flex-direction: column; gap: 6px; }
-    .archive-row.type-blackout { border-left-color: #ef4444; }
-    .archive-row.type-voltage { border-left-color: #f59e0b; }
-    .archive-row.is-ongoing { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.38); }
-    .archive-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-    .archive-when { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 700; color: var(--text-main); }
-    .archive-when .day { color: #cbd5e1; font-weight: 600; }
-    .archive-badges { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
-    .badge-cause { font-size: 0.68rem; font-weight: 600; padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
-    .badge-dur { font-size: 0.69rem; font-weight: 700; color: #93c5fd; background: rgba(59,130,246,0.14); padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
-    .archive-row-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 0.72rem; color: var(--text-muted); }
-    .meta-highlight { color: #e2e8f0; font-weight: 600; }
-    .meta-soc { color: #34d399; font-weight: 600; }
+    .modal-body { padding: 12px 16px 16px; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+    .archive-status-note { font-size: 0.74rem; color: #93c5fd; background: rgba(59,130,246,0.12); border: 1px solid rgba(96,165,250,0.28); border-radius: 10px; padding: 8px 12px; text-align: center; }
+    .archive-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-items: stretch; }
 
-    .modal-foot { padding: 10px 14px 12px; background: rgba(15,23,42,0.96); border-top: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-shrink: 0; }
-    .modal-foot-note { font-size: 0.68rem; color: var(--text-muted); }
-    .btn-close-footer { padding: 7px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.08); color: #fff; font-family: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+    /* Одноманітна симетрична картка події з 3 фіксованими регіонами */
+    .archive-row { background: rgba(30,41,59,0.62); border: 1px solid rgba(255,255,255,0.08); border-top: 3px solid #64748b; border-radius: 14px; padding: 11px 12px; display: grid; grid-template-rows: auto auto auto; gap: 8px; }
+    .archive-row.type-blackout { border-top-color: #ef4444; }
+    .archive-row.type-voltage { border-top-color: #f59e0b; }
+    .archive-row.is-ongoing { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.42); }
+    .archive-row:nth-child(n + 10) { content-visibility: auto; contain-intrinsic-size: auto none auto 138px; }
+
+    .archive-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .archive-when { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 700; color: var(--text-main); font-variant-numeric: tabular-nums; min-width: 0; }
+    .archive-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .archive-when .day { color: #cbd5e1; font-weight: 600; }
+    .badge-dur { font-size: 0.7rem; font-weight: 700; color: #93c5fd; background: rgba(59,130,246,0.15); border: 1px solid rgba(96,165,250,0.22); padding: 2px 8px; border-radius: 7px; white-space: nowrap; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+    .archive-cause-band { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 24px; }
+    .badge-cause { font-size: 0.7rem; font-weight: 600; padding: 3px 8px; border-radius: 7px; line-height: 1.25; }
+    .badge-live { font-size: 0.65rem; font-weight: 700; color: #fecaca; background: rgba(239,68,68,0.28); padding: 2px 6px; border-radius: 6px; letter-spacing: 0.03em; text-transform: uppercase; }
+
+    .archive-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 8px; }
+    .archive-metric-box { background: rgba(15,23,42,0.52); border: 1px solid rgba(255,255,255,0.05); border-radius: 9px; padding: 5px 6px; text-align: center; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
+    .am-val { font-size: 0.76rem; font-weight: 700; color: var(--text-main); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .am-sub { font-size: 0.63rem; color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .modal-foot { padding: 10px 16px 12px; background: rgba(15,23,42,0.97); border-top: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-shrink: 0; }
+    .modal-foot-note { font-size: 0.7rem; color: var(--text-muted); }
+    .btn-close-footer { padding: 7px 16px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.08); color: #fff; font-family: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
     .btn-close-footer:hover { background: rgba(255,255,255,0.14); }
+
+    @media (min-width: 700px) {
+      .modal-head { padding: 16px 20px 14px; }
+      .modal-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+      .modal-body { padding: 14px 20px 18px; }
+      .modal-foot { padding: 11px 20px 13px; }
+      .archive-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+      @supports (grid-template-rows: subgrid) {
+        .archive-row { grid-template-rows: subgrid; grid-row: span 3; }
+      }
+      .filter-bar { max-width: 420px; }
+    }
+
+    @media (min-width: 1060px) {
+      .archive-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
   </style>
 </head>
 <body>
@@ -566,15 +595,23 @@ export function renderHTML(data) {
       <div class="modal-kpis">
         <div class="modal-kpi">
           <div id="archive-kpi-blackout" class="modal-kpi-val" style="color:#f87171;">—</div>
+          <div id="archive-kpi-blackout-sub" class="modal-kpi-sub">—</div>
           <div class="modal-kpi-lbl">🔴 Блекаути ДТЕК</div>
         </div>
         <div class="modal-kpi">
           <div id="archive-kpi-voltage" class="modal-kpi-val" style="color:#f59e0b;">—</div>
+          <div id="archive-kpi-voltage-sub" class="modal-kpi-sub">—</div>
           <div class="modal-kpi-lbl">⚡ Захист напруги</div>
         </div>
         <div class="modal-kpi">
-          <div id="archive-kpi-avg" class="modal-kpi-val" style="color:#34d399;">—</div>
-          <div id="archive-kpi-avg-lbl" class="modal-kpi-lbl">📊 Сер. ДТЕК • мін. АКБ</div>
+          <div id="archive-kpi-avg" class="modal-kpi-val" style="color:#60a5fa;">—</div>
+          <div class="modal-kpi-sub">середня потужність</div>
+          <div class="modal-kpi-lbl">📊 Навант. при ДТЕК</div>
+        </div>
+        <div class="modal-kpi">
+          <div id="archive-kpi-extremum" class="modal-kpi-val" style="color:#34d399;">—</div>
+          <div id="archive-kpi-extremum-sub" class="modal-kpi-sub">—</div>
+          <div class="modal-kpi-lbl">🔋 Мін. АКБ • пік</div>
         </div>
       </div>
 
@@ -634,6 +671,8 @@ export function renderHTML(data) {
     }
 
     let archiveState = null;
+    let archiveLoadedAt = 0;
+    const ARCHIVE_CLIENT_TTL_MS = 120000;
     let archiveFilter = 'all';
     let archiveLoadPromise = null;
 
@@ -652,6 +691,48 @@ export function renderHTML(data) {
       return p.length === 3 ? (p[2] + '.' + p[1]) : iso;
     }
 
+    function renderArchiveCardMarkup(ev) {
+      const isBlackout = (ev.eventType === 'BLACKOUT');
+      const cardClass = 'archive-row ' + (isBlackout ? 'type-blackout' : 'type-voltage') + (ev.isOngoing ? ' is-ongoing' : '');
+      const dotColor = ev.isOngoing ? '#ef4444' : (isBlackout ? '#ef4444' : '#f59e0b');
+      const dayPrefix = ev.dayLabel ? '<span class="day">' + escHtml(ev.dayLabel) + ',</span>' : '';
+      const timeText = ev.isOngoing ? ('з ' + escHtml(ev.start)) : (escHtml(ev.start) + ' — ' + escHtml(ev.end));
+      const badgeStyle = 'color:' + escHtml(ev.eventBadgeColor || (isBlackout ? '#fca5a5' : '#fcd34d')) + '; background:' + escHtml(ev.eventBadgeBg || 'rgba(245,158,11,0.15)') + ';';
+      const socMain = (ev.socDrain > 0) ? (ev.startSoc + '% ➔ ' + ev.minSoc + '%') : ((ev.startSoc ?? 100) + '%');
+      const socSub = (ev.socDrain > 0) ? ('-' + ev.socDrain + '% АКБ') : '0% розряду';
+
+      return (
+        '<article class="' + cardClass + '">' +
+          '<header class="archive-row-head">' +
+            '<div class="archive-when">' +
+              '<span class="archive-dot" style="background:' + dotColor + ';"></span>' +
+              dayPrefix +
+              '<span>' + timeText + '</span>' +
+            '</div>' +
+            '<span class="badge-dur">⏳ ' + escHtml(ev.durStr) + '</span>' +
+          '</header>' +
+          '<div class="archive-cause-band">' +
+            '<span class="badge-cause" style="' + badgeStyle + '">' + escHtml(ev.eventLabel) + '</span>' +
+            (ev.isOngoing ? '<span class="badge-live">● Зараз</span>' : '') +
+          '</div>' +
+          '<footer class="archive-metrics">' +
+            '<div class="archive-metric-box">' +
+              '<div class="am-val" style="color:#60a5fa;">' + escHtml(ev.avgKw) + ' кВт</div>' +
+              '<div class="am-sub">пік ' + escHtml(ev.peakKw) + ' кВт</div>' +
+            '</div>' +
+            '<div class="archive-metric-box">' +
+              '<div class="am-val" style="color:#f59e0b;">' + escHtml(ev.energyKwh) + ' кВт·год</div>' +
+              '<div class="am-sub">витрата АКБ</div>' +
+            '</div>' +
+            '<div class="archive-metric-box">' +
+              '<div class="am-val" style="color:#34d399;">' + escHtml(socMain) + '</div>' +
+              '<div class="am-sub">' + escHtml(socSub) + '</div>' +
+            '</div>' +
+          '</footer>' +
+        '</article>'
+      );
+    }
+
     function renderArchiveDialog() {
       if (!archiveState) return;
       const period = archiveState.period || {};
@@ -667,13 +748,19 @@ export function renderHTML(data) {
       }
 
       const kpiB = document.getElementById('archive-kpi-blackout');
+      const kpiBSub = document.getElementById('archive-kpi-blackout-sub');
       const kpiV = document.getElementById('archive-kpi-voltage');
+      const kpiVSub = document.getElementById('archive-kpi-voltage-sub');
       const kpiAvg = document.getElementById('archive-kpi-avg');
-      const kpiAvgLbl = document.getElementById('archive-kpi-avg-lbl');
-      if (kpiB) kpiB.innerHTML = (summary.blackoutCount || 0) + ' <small style="font-size:0.68rem; color:var(--text-muted); font-weight:500;">(' + escHtml(summary.blackoutTotalFormatted || '0 хв') + ')</small>';
-      if (kpiV) kpiV.innerHTML = (summary.voltageCount || 0) + ' <small style="font-size:0.68rem; color:var(--text-muted); font-weight:500;">(' + escHtml(summary.voltageTotalFormatted || '0 хв') + ')</small>';
-      if (kpiAvg) kpiAvg.innerHTML = escHtml(summary.avgBlackoutKw || '0.0') + ' <small style="font-size:0.68rem;">кВт</small>';
-      if (kpiAvgLbl) kpiAvgLbl.textContent = '📊 Сер. ДТЕК • мін. ' + (summary.minSoc ?? 100) + '%';
+      const kpiExt = document.getElementById('archive-kpi-extremum');
+      const kpiExtSub = document.getElementById('archive-kpi-extremum-sub');
+      if (kpiB) kpiB.textContent = String(summary.blackoutCount || 0);
+      if (kpiBSub) kpiBSub.textContent = summary.blackoutTotalFormatted || '0 хв';
+      if (kpiV) kpiV.textContent = String(summary.voltageCount || 0);
+      if (kpiVSub) kpiVSub.textContent = summary.voltageTotalFormatted || '0 хв';
+      if (kpiAvg) kpiAvg.textContent = (summary.avgBlackoutKw || '0.0') + ' кВт';
+      if (kpiExt) kpiExt.textContent = (summary.minSoc ?? 100) + '% АКБ';
+      if (kpiExtSub) kpiExtSub.textContent = 'пік ' + (summary.maxPeakKw || '0.0') + ' кВт';
 
       const pill = document.getElementById('archive-btn-pill');
       if (pill && typeof summary.totalEvents === 'number') {
@@ -694,42 +781,16 @@ export function renderHTML(data) {
       const body = document.getElementById('archiveListBody');
       if (!body) return;
 
-      const parts = [];
-      if (period.isPartial) {
-        parts.push('<div class="archive-status-note">⏳ Дозавантажуємо архів з хмари Deye (залишилось ' + (period.remainingDays || 0) + ' дн.)...</div>');
-      }
+      const statusBanner = period.isPartial
+        ? '<div class="archive-status-note">⏳ Дозавантажуємо архів з хмари Deye (залишилось ' + (period.remainingDays || 0) + ' дн.)...</div>'
+        : '';
 
       if (filtered.length === 0) {
-        parts.push('<div style="text-align:center; padding:24px 12px; color:var(--text-muted); font-size:0.82rem;">🟢 За вибраним фільтром подій не зафіксовано.</div>');
-      } else {
-        for (const ev of filtered) {
-          const isBlackout = (ev.eventType === 'BLACKOUT');
-          const rowClass = 'archive-row ' + (isBlackout ? 'type-blackout' : 'type-voltage') + (ev.isOngoing ? ' is-ongoing' : '');
-          const dayPrefix = ev.dayLabel ? '<span class="day">' + escHtml(ev.dayLabel) + ',</span> ' : '';
-          const timeText = ev.isOngoing ? ('з ' + escHtml(ev.start) + ' (триває)') : (escHtml(ev.start) + ' — ' + escHtml(ev.end));
-          const badgeStyle = 'color:' + escHtml(ev.eventBadgeColor || (isBlackout ? '#fca5a5' : '#fcd34d')) + '; background:' + escHtml(ev.eventBadgeBg || 'rgba(245,158,11,0.15)') + ';';
-          const socStr = (ev.socDrain > 0)
-            ? ('🔋 ' + ev.startSoc + '% ➔ ' + ev.minSoc + '% (-' + ev.socDrain + '%)')
-            : ('🔋 ~' + escHtml(ev.energyKwh) + ' кВт·год');
-          parts.push(
-            '<div class="' + rowClass + '">' +
-              '<div class="archive-row-top">' +
-                '<div class="archive-when">' + dayPrefix + '<span>' + timeText + '</span></div>' +
-                '<div class="archive-badges">' +
-                  '<span class="badge-cause" style="' + badgeStyle + '">' + escHtml(ev.eventLabel) + '</span>' +
-                  '<span class="badge-dur">⏳ ' + escHtml(ev.durStr) + '</span>' +
-                '</div>' +
-              '</div>' +
-              '<div class="archive-row-meta">' +
-                '<span>Сер: <span class="meta-highlight">' + escHtml(ev.avgKw) + ' кВт</span> <span style="opacity:0.75;">(пік ' + escHtml(ev.peakKw) + ')</span> • ~' + escHtml(ev.energyKwh) + ' кВт·год</span>' +
-                '<span class="meta-soc">' + socStr + '</span>' +
-              '</div>' +
-            '</div>'
-          );
-        }
+        body.innerHTML = statusBanner + '<div style="text-align:center; padding:24px 12px; color:var(--text-muted); font-size:0.82rem;">🟢 За вибраним фільтром подій не зафіксовано.</div>';
+        return;
       }
 
-      body.innerHTML = parts.join('');
+      body.innerHTML = statusBanner + '<div class="archive-grid">' + filtered.map(renderArchiveCardMarkup).join('') + '</div>';
     }
 
     function setArchiveFilter(filter) {
@@ -749,6 +810,7 @@ export function renderHTML(data) {
       const nextData = await resp.json();
       const prevDays = archiveState && archiveState.period ? (archiveState.period.daysAvailable || 0) : -1;
       archiveState = nextData;
+      archiveLoadedAt = Date.now();
       renderArchiveDialog();
       const nextDays = nextData && nextData.period ? (nextData.period.daysAvailable || 0) : 0;
       if (nextData && nextData.period && nextData.period.isPartial && depth < 3 && nextDays > prevDays) {
@@ -757,9 +819,14 @@ export function renderHTML(data) {
     }
 
     function loadMonthlyArchive() {
-      if (archiveState && !(archiveState.period && archiveState.period.isPartial)) {
+      const isFresh = Boolean(
+        archiveState &&
+        !(archiveState.period && archiveState.period.isPartial) &&
+        (Date.now() - archiveLoadedAt < ARCHIVE_CLIENT_TTL_MS)
+      );
+      if (archiveState) {
         renderArchiveDialog();
-        return;
+        if (isFresh) return;
       }
       if (!archiveLoadPromise) {
         archiveLoadPromise = fetchArchivePass(0).catch(() => {

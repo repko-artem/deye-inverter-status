@@ -14,6 +14,8 @@ export class TelemetryCache {
     this.cachedDayRecords = {};
     this.kvSnapshotMeta = null;
     this.refreshStartedAt = 0;
+    this.archiveData = null;
+    this.archiveTimestamp = 0;
   }
 
   clear() {
@@ -23,6 +25,21 @@ export class TelemetryCache {
     this.cachedDayRecords = {};
     this.kvSnapshotMeta = null;
     this.refreshStartedAt = 0;
+    this.archiveData = null;
+    this.archiveTimestamp = 0;
+  }
+
+  isArchiveFresh(maxAgeMs = CONFIG.CACHE.ARCHIVE_TTL_MS || 120000, now = Date.now()) {
+    return Boolean(this.archiveData && (now - this.archiveTimestamp < maxAgeMs));
+  }
+
+  getArchiveRecent() {
+    return this.archiveData;
+  }
+
+  setArchiveRecent(data, timestamp = Date.now()) {
+    this.archiveData = data;
+    this.archiveTimestamp = timestamp;
   }
 
   isRefreshing(maxAgeMs = 15000, now = Date.now()) {

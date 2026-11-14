@@ -84,25 +84,44 @@ export async function getFreshTelemetry(env) {
   return service.getTelemetry();
 }
 
+const SECURITY_HEADERS = Object.freeze({
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "SAMEORIGIN",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "geolocation=(), camera=(), microphone=()"
+});
+
+function resolveRoute(pathname) {
+  if (pathname === "/api/archive") return { kind: "archive", cachePath: "/api/archive" };
+  if (pathname === "/api/status" || pathname === "/status.json") return { kind: "status", cachePath: "/api/status" };
+  return { kind: "html", cachePath: "/" };
+}
+
+function buildRouteResponse(routeKind, body, headers) {
+  if (routeKind === "html") {
+    return new Response(body, {
+      headers: { ...headers, "Content-Type": "text/html; charset=utf-8" }
+    });
+  }
+  return new Response(JSON.stringify(body), {
+    headers: {
+      ...headers,
+      "Content-Type": "application/json; charset=utf-8",
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const isArchive = (url.pathname === "/api/archive");
-    const isApi = (url.pathname === "/api/status" || url.pathname === "/status.json");
+    const route = resolveRoute(url.pathname);
     const isGetOrHead = (request.method === 'GET' || request.method === 'HEAD');
-
-    const securityHeaders = {
-      "X-Content-Type-Options": "nosniff",
-      "X-Frame-Options": "SAMEORIGIN",
-      "Referrer-Policy": "strict-origin-when-cross-origin",
-      "Permissions-Policy": "geolocation=(), camera=(), microphone=()"
-    };
+    const isBypass = (url.searchParams.get("fresh") === "1" || url.searchParams.get("bypass") === "1");
 
     // 1. Перевірка Edge-кешу Cloudflare (глобальна CDN)
     const cache = (typeof caches !== 'undefined' && caches.default) ? caches.default : null;
-    const cachePath = isArchive ? "/api/archive" : (isApi ? "/api/status" : "/");
-    const normalizedKey = new Request(url.origin + cachePath, { method: 'GET' });
-    const isBypass = (url.searchParams.get("fresh") === "1" || url.searchParams.get("bypass") === "1");
+    const normalizedKey = new Request(url.origin + route.cachePath, { method: 'GET' });
 
     if (!isBypass && isGetOrHead && cache) {
       const cached = await cache.match(normalizedKey);
@@ -113,63 +132,38 @@ export default {
       }
     }
 
-    // 1.5. Ендпоінт 30-денного архіву подій (завантажується на вимогу при відкритті модального вікна)
-    if (isArchive) {
+    // 2. Виконання запиту за таблицею маршрутів (OCP)
+    let payload;
+    let headers;
+    let shouldEdgeCache = (!isBypass && isGetOrHead);
+
+    if (route.kind === "archive") {
       const service = new TelemetryService(env, globalCache, CONFIG);
-      const archive = await service.getOutageArchive();
-      const isPartial = Boolean(archive?.period?.isPartial);
-      const archiveResp = new Response(
-        request.method === 'HEAD' ? null : JSON.stringify(archive),
-        {
-          headers: {
-            ...securityHeaders,
-            "Content-Type": "application/json; charset=utf-8",
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control": isPartial ? "no-store" : "public, max-age=120, s-maxage=120"
-          }
-        }
-      );
-      if (!isBypass && !isPartial && isGetOrHead && cache && ctx && ctx.waitUntil) {
-        ctx.waitUntil(cache.put(normalizedKey, archiveResp.clone()));
-      }
-      return archiveResp;
-    }
-
-    // 2. Отримання даних через багаторівневий кеш (Memory + KV + SWR)
-    const data = await getCachedTelemetry(env, ctx, isBypass);
-    const cacheAgeSec = Math.max(0, globalCache.getAgeSec());
-
-    // Перевірка та відправка сповіщень Telegram (асинхронно у фоні)
-    if (ctx && ctx.waitUntil) {
-      ctx.waitUntil(processTelegramNotifications(data, env));
-    }
-
-    const baseHeaders = {
-      ...securityHeaders,
-      "Cache-Control": "public, max-age=60, s-maxage=60, stale-while-revalidate=30",
-      "X-Server-Cache-Age": cacheAgeSec.toString()
-    };
-
-    let response;
-    if (isApi) {
-      response = new Response(JSON.stringify(data), {
-        headers: {
-          ...baseHeaders,
-          "Content-Type": "application/json; charset=utf-8",
-          "Access-Control-Allow-Origin": "*"
-        }
-      });
+      payload = await service.getOutageArchive({ bypassCache: isBypass });
+      const isPartial = Boolean(payload?.period?.isPartial);
+      if (isPartial) shouldEdgeCache = false;
+      headers = {
+        ...SECURITY_HEADERS,
+        "Cache-Control": isPartial ? "no-store" : "public, max-age=120, s-maxage=120"
+      };
     } else {
-      response = new Response(renderHTML(data), {
-        headers: {
-          ...baseHeaders,
-          "Content-Type": "text/html; charset=utf-8"
-        }
-      });
+      const data = await getCachedTelemetry(env, ctx, isBypass);
+      const cacheAgeSec = Math.max(0, globalCache.getAgeSec());
+      if (ctx && ctx.waitUntil) {
+        ctx.waitUntil(processTelegramNotifications(data, env));
+      }
+      payload = (route.kind === "html") ? renderHTML(data) : data;
+      headers = {
+        ...SECURITY_HEADERS,
+        "Cache-Control": "public, max-age=60, s-maxage=60, stale-while-revalidate=30",
+        "X-Server-Cache-Age": cacheAgeSec.toString()
+      };
     }
 
-    // Зберігаємо в CDN-кеш Cloudflare
-    if (!isBypass && isGetOrHead && cache && ctx && ctx.waitUntil) {
+    const response = buildRouteResponse(route.kind, payload, headers);
+
+    // 3. Зберігаємо повну GET/HEAD-відповідь у CDN-кеш Cloudflare під нормалізованим ключем
+    if (shouldEdgeCache && cache && ctx && ctx.waitUntil) {
       ctx.waitUntil(cache.put(normalizedKey, response.clone()));
     }
 
