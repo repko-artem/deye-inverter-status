@@ -139,6 +139,40 @@ export class TelemetryService {
     return { ongoing_outage_chart, blackout_outages, voltage_outages, outageCharts };
   }
 
+  /**
+   * Резервний пошук останніх пофазних напруг (через перехід доби 00:00–00:06 або затримку Deye API)
+   * із багатоденних записів або попереднього кешу в межах maxAgeSec (за замовчуванням 30 хв).
+   */
+  #findFallbackVoltages(multiDayRecords, prevSnapshotVoltages, currentUtcSec, prefix = 'v', maxAgeSec = 1800) {
+    const k1 = `${prefix}1`, k2 = `${prefix}2`, k3 = `${prefix}3`;
+    const minTs = currentUtcSec - maxAgeSec;
+    let fromRecords = null;
+
+    for (let i = multiDayRecords.length - 1; i >= 0; i--) {
+      const r = multiDayRecords[i];
+      if (!r || typeof r.dateTime !== 'number') continue;
+      if (r.dateTime < minTs) break;
+      if (typeof r[k1] === 'number' && typeof r[k2] === 'number' && typeof r[k3] === 'number') {
+        fromRecords = { l1: r[k1], l2: r[k2], l3: r[k3], ts: r.dateTime };
+        break;
+      }
+    }
+
+    const fromSnapshot = (
+      prevSnapshotVoltages &&
+      typeof prevSnapshotVoltages.l1 === 'number' &&
+      typeof prevSnapshotVoltages.l2 === 'number' &&
+      typeof prevSnapshotVoltages.l3 === 'number' &&
+      typeof prevSnapshotVoltages.ts === 'number' &&
+      prevSnapshotVoltages.ts >= minTs
+    ) ? prevSnapshotVoltages : null;
+
+    if (fromSnapshot && (!fromRecords || fromSnapshot.ts > fromRecords.ts)) {
+      return fromSnapshot;
+    }
+    return fromRecords;
+  }
+
   async getTelemetry() {
     const currentUtcSec = nowUtcSec();
     const nowStr = formatKyivTime(currentUtcSec);
@@ -204,13 +238,13 @@ export class TelemetryService {
         use_power_kw, discharge_power_kw, ongoing_outage_chart, this.config
       );
 
-      const lastRecord = health.lastRecord;
-      const fallbackGridVoltages = (lastRecord && typeof lastRecord.v1 === 'number' && typeof lastRecord.v2 === 'number' && typeof lastRecord.v3 === 'number')
-        ? { l1: lastRecord.v1, l2: lastRecord.v2, l3: lastRecord.v3, ts: lastRecord.dateTime }
-        : null;
-      const fallbackLoadVoltages = (lastRecord && typeof lastRecord.lv1 === 'number' && typeof lastRecord.lv2 === 'number' && typeof lastRecord.lv3 === 'number')
-        ? { l1: lastRecord.lv1, l2: lastRecord.lv2, l3: lastRecord.lv3, ts: lastRecord.dateTime }
-        : null;
+      const prevSnapshot = this.cache.getRecent();
+      const fallbackGridVoltages = latestVoltages?.grid
+        ? null
+        : this.#findFallbackVoltages(multiDayRecords, prevSnapshot?.grid_voltages, currentUtcSec, 'v');
+      const fallbackLoadVoltages = latestVoltages?.load
+        ? null
+        : this.#findFallbackVoltages(multiDayRecords, prevSnapshot?.load_voltages, currentUtcSec, 'lv');
 
       const rawResult = {
         version: this.config.APP_VERSION,

@@ -1665,4 +1665,65 @@ describe('30-Day Monthly Archive API & Modal UI (v1.7.0)', () => {
     assert.equal(withPreTrigger.currentOutage.voltageCause, 'UNDERVOLTAGE');
     assert.equal(withPreTrigger.currentOutage.eventLabel, '📉 Занижена напруга (L3: 192 В)');
   });
+
+  test('getFreshTelemetry keeps grid_voltages across midnight rollover when today device voltages are empty', async () => {
+    const originalFetch = globalThis.fetch;
+    globalCache.clear();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const barMinus5m = Math.floor((nowSec - 300) / 300) * 300;
+    const barNow = barMinus5m + 300;
+    const kyivNow = new Date((nowSec + 2 * 3600) * 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+    const todaySlash = `${kyivNow.getUTCFullYear()}/${pad(kyivNow.getUTCMonth() + 1)}/${pad(kyivNow.getUTCDate())}`;
+
+    try {
+      globalThis.fetch = async (url) => {
+        const sUrl = String(url);
+        if (sUrl.includes('/station/display/')) {
+          return new Response(JSON.stringify({
+            batterySoc: 75,
+            batteryBv: 642,
+            wirePower: 0,
+            batteryPower: 7300,
+            usePower: 7300,
+            gridRelayStatus: 'off',
+            batteryStatus: 'DISCHARGE',
+            networkStatus: 'NORMAL',
+            lastUpdateTime: nowSec - 60
+          }), { status: 200 });
+        }
+        if (sUrl.includes('/device-list')) {
+          return new Response(JSON.stringify([{ deviceId: 123456 }]), { status: 200 });
+        }
+        if (sUrl.includes('/stats/daily')) {
+          return new Response(JSON.stringify({
+            records: [
+              { dateTime: barMinus5m, wirePower: 0, batteryPower: 7300, usePower: 7300, batterySoc: 76 },
+              { dateTime: barNow, wirePower: 0, batteryPower: 7300, usePower: 7300, batterySoc: 75 }
+            ]
+          }), { status: 200 });
+        }
+        if (sUrl.includes('/stats/day')) {
+          // Today returns empty [] (just after 00:00), yesterday has recent voltages
+          if (sUrl.includes(`day=${todaySlash}`)) {
+            return new Response(JSON.stringify([]), { status: 200 });
+          }
+          return new Response(JSON.stringify([
+            { storageName: 'G_V_L1', detailList: [{ collectionTime: barMinus5m, value: '231.2' }] },
+            { storageName: 'G_V_L2', detailList: [{ collectionTime: barMinus5m, value: '258.6' }] },
+            { storageName: 'G_V_L3', detailList: [{ collectionTime: barMinus5m, value: '219.4' }] }
+          ]), { status: 200 });
+        }
+        return new Response(JSON.stringify({}), { status: 200 });
+      };
+
+      const env = { DEYE_TOKEN: 'test-token', DEYE_STATION_ID: '123', DEYE_DEVICE_ID: '123456' };
+      const data = await getFreshTelemetry(env);
+      assert.ok(data.grid_voltages, 'grid_voltages should fall back across midnight rollover when today device voltages are empty');
+      assert.equal(data.grid_voltages.l2, 258.6);
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalCache.clear();
+    }
+  });
 });
