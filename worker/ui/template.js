@@ -4,6 +4,7 @@
  */
 
 import { resolveSystemState, SystemStateId } from '../domain/system-state.js';
+import { formatKyivTime } from '../domain/time.js';
 
 function getPhaseColor(v) {
   if (typeof v !== 'number' || Number.isNaN(v)) return '#94a3b8';
@@ -44,10 +45,17 @@ function buildVoltageBarHTML(gridVoltages, loadVoltages, isGridOn) {
     ? `<span style="color:#f87171;">0 В (вимкнено ДТЕК)</span>`
     : `<span style="color:var(--text-muted);">Норма: 205–248 В (відсічка &lt;195 / &gt;255)</span>`;
 
+  const measuredTime = (typeof gridVoltages.ts === 'number' && gridVoltages.ts > 0)
+    ? formatKyivTime(gridVoltages.ts)
+    : '';
+  const measuredNote = measuredTime
+    ? ` <span style="font-size:0.60rem; font-weight:500; color:var(--text-muted); opacity:0.8; white-space:nowrap;">· вимір ${measuredTime}</span>`
+    : '';
+
   return `
     <div class="card" style="padding:12px 14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">
-        <div style="font-size:0.78rem; font-weight:700; color:var(--text-main);">⚡ Напруга міської мережі (по фазах)</div>
+        <div style="font-size:0.78rem; font-weight:700; color:var(--text-main);">⚡ Напруга міської мережі (по фазах)${measuredNote}</div>
         <div style="font-size:0.66rem; color:var(--text-muted);">${statusTag}${loadNote}</div>
       </div>
       <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">

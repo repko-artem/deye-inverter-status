@@ -1241,7 +1241,7 @@ describe('3-Phase Voltage Tracking & Outage Cause Classification', () => {
       charge_power_kw: 0,
       discharge_power_kw: 4.5,
       grid_power_kw: 0,
-      grid_voltages: { l1: 241.2, l2: 255.4, l3: 240.8 },
+      grid_voltages: { l1: 241.2, l2: 255.4, l3: 240.8, ts: 1794781882 },
       load_voltages: { l1: 232.0, l2: 232.2, l3: 231.8 },
       est_hours_formatted: '11 год',
       est_time_until: 'до 03:15',
@@ -1263,6 +1263,7 @@ describe('3-Phase Voltage Tracking & Outage Cause Classification', () => {
     });
 
     assert.ok(html.includes('Захист від перенапруги (з 16:05)'));
+    assert.ok(html.includes('вимір 00:31'), 'Should render compact voltage measurement timestamp');
     assert.ok(html.includes('Напруга міської мережі (вхід)') || html.includes('Напруга міської мережі (по фазах)'));
     assert.ok(html.includes('L1'));
     assert.ok(html.includes('255'));
