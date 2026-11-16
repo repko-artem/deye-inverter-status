@@ -1631,16 +1631,16 @@ describe('30-Day Monthly Archive API & Modal UI (v1.7.0)', () => {
       { dateTime: t0 + 300, wirePower: 0, batteryPower: 7400, batterySoc: 100 }
     ];
 
-    // 1. Live grid voltage shows L2 = 249V (> 248V reconnect threshold) while 5-min bar lacks v1/v2/v3
+    // 1. Live grid voltage shows L2 = 251V (> 250V reconnect threshold) while 5-min bar lacks v1/v2/v3
     const withOvervoltage = analyzeMultiDayOutages(
       recordsNoLiveV,
       new Date((t0 + 480) * 1000),
       CONFIG,
-      { liveGridVoltages: { l1: 229, l2: 249, l3: 216, ts: t0 + 420 } }
+      { liveGridVoltages: { l1: 229, l2: 251, l3: 216, ts: t0 + 420 } }
     );
     assert.ok(withOvervoltage.currentOutage, 'Should detect ongoing event');
     assert.equal(withOvervoltage.currentOutage.voltageCause, 'OVERVOLTAGE');
-    assert.equal(withOvervoltage.currentOutage.eventLabel, '📈 Завищена напруга (L2: 249 В)');
+    assert.equal(withOvervoltage.currentOutage.eventLabel, '📈 Завищена напруга (L2: 251 В)');
 
     // 2. Nominal in-range live voltage should include extreme phase hint in initial check badge
     const withNominalLive = analyzeMultiDayOutages(

@@ -65,11 +65,25 @@ function updateEventVoltageStats(curr, record, isPreTrigger = false) {
 }
 
 /**
- * Класифікує подію відключення за характером (блекаут ДТЕК 0 В vs просідання < 195 В vs перенапруга > 255 В).
+ * Пороги напруги мережі з конфігурації (Single Source of Truth).
+ */
+function getGridVoltageBounds(config = CONFIG) {
+  const t = config?.THRESHOLDS || CONFIG.THRESHOLDS;
+  return {
+    lv1: t.GRID_LV1_V ?? 192,
+    lowReconnect: t.GRID_RECONNECT_LOW_V ?? 200,
+    highReconnect: t.GRID_RECONNECT_HIGH_V ?? 250,
+    hv1: t.GRID_HV1_V ?? 255
+  };
+}
+
+/**
+ * Класифікує подію відключення за характером (блекаут ДТЕК 0 В vs просідання < LV1 vs перенапруга > HV1).
  */
 export function classifyOutageEvent(event, config = CONFIG) {
   const maxSagMin = config.THRESHOLDS?.VOLTAGE_SAG_MAX_MINUTES ?? 25;
   const maxSagSoc = config.THRESHOLDS?.VOLTAGE_SAG_MAX_SOC_DRAIN ?? 3;
+  const { lv1, lowReconnect, highReconnect, hv1 } = getGridVoltageBounds(config);
 
   const durationMin = event.durationMin || 0;
   const socDrain = event.socDrain ?? Math.max(0, (event.startSoc || 0) - (event.minSoc || 0));
@@ -87,25 +101,25 @@ export function classifyOutageEvent(event, config = CONFIG) {
       };
     }
 
-    if (event.maxGridV !== null && event.maxGridV >= 248 && (event.maxGridV >= 252 || event.minGridV === null || event.minGridV >= 205)) {
+    if (event.maxGridV !== null && event.maxGridV >= highReconnect && (event.maxGridV >= hv1 - 2 || event.minGridV === null || event.minGridV >= lowReconnect)) {
       return {
         type: OutageType.VOLTAGE_SAG,
         voltageCause: 'OVERVOLTAGE',
         label: `📈 Завищена напруга (${event.maxPhase}: ${Math.round(event.maxGridV)} В)`,
         badgeColor: '#f59e0b',
         badgeBg: 'rgba(245, 158, 11, 0.15)',
-        description: `Захисне відсікання мережі інвертором через перенапругу (${event.maxPhase} до ${event.maxGridV.toFixed(1)} В, поріг HV1 255 В / повернення < 248 В).`
+        description: `Захисне відсікання мережі інвертором через перенапругу (${event.maxPhase} до ${event.maxGridV.toFixed(1)} В, поріг HV1 ${hv1} В / повернення < ${highReconnect} В).`
       };
     }
 
-    if (event.minGridV !== null && event.minGridV < 205) {
+    if (event.minGridV !== null && event.minGridV < lowReconnect) {
       return {
         type: OutageType.VOLTAGE_SAG,
         voltageCause: 'UNDERVOLTAGE',
         label: `📉 Занижена напруга (${event.minPhase}: ${Math.round(event.minGridV)} В)`,
         badgeColor: '#f59e0b',
         badgeBg: 'rgba(245, 158, 11, 0.15)',
-        description: `Захисне відсікання мережі інвертором через просідання напруги (${event.minPhase} до ${event.minGridV.toFixed(1)} В, поріг LV1 195 В / повернення > 205 В).`
+        description: `Захисне відсікання мережі інвертором через просідання напруги (${event.minPhase} до ${event.minGridV.toFixed(1)} В, поріг LV1 ${lv1} В / повернення > ${lowReconnect} В).`
       };
     }
   }
@@ -118,7 +132,7 @@ export function classifyOutageEvent(event, config = CONFIG) {
       label: '⚡ Стрибок напруги',
       badgeColor: '#f59e0b',
       badgeBg: 'rgba(245, 158, 11, 0.15)',
-      description: 'Короткочасне відсікання міської мережі захистом інвертора (напруга поза межами 195–255 В). Запобігло аварійному блокуванню ліфтів.'
+      description: `Короткочасне відсікання міської мережі захистом інвертора (напруга поза межами ${lv1}–${hv1} В). Запобігло аварійному блокуванню ліфтів.`
     };
   }
 
@@ -280,9 +294,10 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG, options = 
       applyLiveGridVoltages(curr, options.liveGridVoltages);
     }
 
+    const { lv1, lowReconnect, highReconnect, hv1 } = getGridVoltageBounds(config);
     const hasOutOfBoundsVoltage = (
-      (curr.maxGridV !== null && curr.maxGridV >= 248) ||
-      (curr.minGridV !== null && curr.minGridV < 205)
+      (curr.maxGridV !== null && curr.maxGridV >= highReconnect) ||
+      (curr.minGridV !== null && curr.minGridV < lowReconnect)
     );
     const hasExplicitVoltageCause = (
       ((curr.voltageSampleCount || 0) > 0 && (curr.zeroVoltageTicks > 0 || hasOutOfBoundsVoltage)) ||
@@ -312,8 +327,8 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG, options = 
         curr.eventBadgeColor = '#f59e0b';
         curr.eventBadgeBg = 'rgba(245, 158, 11, 0.15)';
         curr.eventDescription = phaseHint
-          ? `Перевірка стабільності мережі (зараз ${phaseHint}, допустимо 205–248 В).`
-          : 'Можливе виходження напруги за межі 195–255 В або початок відключення.';
+          ? `Перевірка стабільності мережі (зараз ${phaseHint}, допустимо ${lowReconnect}–${highReconnect} В).`
+          : `Можливе виходження напруги за межі ${lv1}–${hv1} В або початок відключення.`;
       } else {
         curr.eventType = OutageType.BLACKOUT;
         curr.voltageCause = 'BLACKOUT';

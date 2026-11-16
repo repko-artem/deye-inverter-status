@@ -3,6 +3,7 @@
  * Паттерн: State Machine / State Pattern.
  * Єдине джерело правди для визначення операційного режиму системи та його візуалізації в UI.
  */
+import { CONFIG } from '../config.js';
 
 export const SystemStateId = Object.freeze({
   GRID_CHARGING: 'GRID_CHARGING',
@@ -165,6 +166,12 @@ export function resolveSystemState(data, config = {}) {
 
   // 4. Блекаут або захисне відсікання міської мережі (робота будинку від батареї)
   if (!isGridOn) {
+    const t = config.THRESHOLDS || CONFIG.THRESHOLDS;
+    const lv1V = t.GRID_LV1_V ?? 192;
+    const lowReconnectV = t.GRID_RECONNECT_LOW_V ?? 200;
+    const highReconnectV = t.GRID_RECONNECT_HIGH_V ?? 250;
+    const hv1V = t.GRID_HV1_V ?? 255;
+
     const gv = data.grid_voltages || currOutage?.lastGridVoltages || null;
     let voltageCause = currOutage?.voltageCause || null;
     let livePhaseNote = '';
@@ -174,10 +181,10 @@ export function resolveSystemState(data, config = {}) {
       const maxPair = phases.reduce((a, b) => (b[1] > a[1] ? b : a));
       const minPair = phases.reduce((a, b) => (b[1] < a[1] ? b : a));
       if (maxPair[1] >= 50) {
-        if (maxPair[1] >= 248 && (voltageCause === 'OVERVOLTAGE' || maxPair[1] >= 252 || minPair[1] >= 205)) {
+        if (maxPair[1] >= highReconnectV && (voltageCause === 'OVERVOLTAGE' || maxPair[1] >= hv1V - 2 || minPair[1] >= lowReconnectV)) {
           voltageCause = 'OVERVOLTAGE';
           livePhaseNote = `${maxPair[0]}: ${Math.round(maxPair[1])} В`;
-        } else if (minPair[1] < 205) {
+        } else if (minPair[1] < lowReconnectV) {
           voltageCause = 'UNDERVOLTAGE';
           livePhaseNote = `${minPair[0]}: ${Math.round(minPair[1])} В`;
         }
@@ -197,19 +204,19 @@ export function resolveSystemState(data, config = {}) {
     let tipHtml;
 
     if (isOvervoltage) {
-      const peakStr = livePhaseNote || (currOutage?.maxPhase && currOutage?.maxGridV ? `${currOutage.maxPhase}: ${Math.round(currOutage.maxGridV)} В` : 'вище 255 В');
+      const peakStr = livePhaseNote || (currOutage?.maxPhase && currOutage?.maxGridV ? `${currOutage.maxPhase}: ${Math.round(currOutage.maxGridV)} В` : `вище ${hv1V} В`);
       title = `Захист від перенапруги ${outageStartStr}`.trim();
-      subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}У мережі ${peakStr} (очікує зниження < 248 В)`;
-      tipHtml = `<strong>Захист інвертора від перенапруги:</strong> У міській мережі зафіксовано підвищену напругу (${peakStr}). Інвертор відсік мережу, щоб уберегти ліфти й насоси, та живить будинок стабільними 230 В від батареї. Повернення на мережу відбудеться автоматично через 60 с після зниження всіх фаз нижче 248 В.`;
+      subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}У мережі ${peakStr} (очікує зниження < ${highReconnectV} В)`;
+      tipHtml = `<strong>Захист інвертора від перенапруги:</strong> У міській мережі зафіксовано підвищену напругу (${peakStr}). Інвертор відсік мережу, щоб уберегти ліфти й насоси, та живить будинок стабільними 230 В від батареї. Повернення на мережу відбудеться автоматично через 60 с після зниження всіх фаз нижче ${highReconnectV} В.`;
     } else if (isUndervoltage) {
-      const lowStr = livePhaseNote || (currOutage?.minPhase && currOutage?.minGridV ? `${currOutage.minPhase}: ${Math.round(currOutage.minGridV)} В` : 'нижче 195 В');
+      const lowStr = livePhaseNote || (currOutage?.minPhase && currOutage?.minGridV ? `${currOutage.minPhase}: ${Math.round(currOutage.minGridV)} В` : `нижче ${lv1V} В`);
       title = `Захист від просідання напруги ${outageStartStr}`.trim();
-      subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}У мережі ${lowStr} (очікує підняття > 205 В)`;
-      tipHtml = `<strong>Захист інвертора від просідання:</strong> У міській мережі зафіксовано занижену напругу (${lowStr}). Інвертор відсік мережу та живить будинок стабільними 230 В від батареї. Повернення відбудеться автоматично через 60 с після підняття напруги вище 205 В.`;
+      subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}У мережі ${lowStr} (очікує підняття > ${lowReconnectV} В)`;
+      tipHtml = `<strong>Захист інвертора від просідання:</strong> У міській мережі зафіксовано занижену напругу (${lowStr}). Інвертор відсік мережу та живить будинок стабільними 230 В від батареї. Повернення відбудеться автоматично через 60 с після підняття напруги вище ${lowReconnectV} В.`;
     } else if (isSagPhase) {
       title = `Резервне живлення • Перевірка мережі ${outageStartStr}`.trim();
       subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}Можливий стрибок напруги або початок відключення`;
-      tipHtml = `<strong>Захист інвертора:</strong> Будинок переведено на резервне живлення від батарей (ліфти, насоси та освітлення працюють стабільно). Найчастіша причина коротких перемикань — вихід напруги за межі 195–255 В. Щойно напруга повернеться в коридор 205–248 В на 60 с, система автоматично перейде на міську мережу.`;
+      tipHtml = `<strong>Захист інвертора:</strong> Будинок переведено на резервне живлення від батарей (ліфти, насоси та освітлення працюють стабільно). Найчастіша причина коротких перемикань — вихід напруги за межі ${lv1V}–${hv1V} В. Щойно напруга повернеться в коридор ${lowReconnectV}–${highReconnectV} В на 60 с, система автоматично перейде на міську мережу.`;
     } else {
       title = `Відключення світла ${outageStartStr}`.trim();
       subtitle = `${outageDurStr ? `Триває ${outageDurStr} • ` : ''}${livePhaseNote ? `${livePhaseNote} • ` : ''}Старт із ${currOutage ? currOutage.startSoc : soc}%`;

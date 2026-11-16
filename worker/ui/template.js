@@ -3,14 +3,16 @@
  * Ізольований презентаційний шар (UI / View).
  */
 
+import { CONFIG } from '../config.js';
 import { resolveSystemState, SystemStateId } from '../domain/system-state.js';
 import { formatKyivTime } from '../domain/time.js';
 
 function getPhaseColor(v) {
   if (typeof v !== 'number' || Number.isNaN(v)) return '#94a3b8';
+  const t = CONFIG.THRESHOLDS;
   if (v < 50) return '#ef4444';
-  if (v < 195 || v > 255) return '#ef4444';
-  if (v < 205 || v > 248) return '#f59e0b';
+  if (v < t.GRID_LV1_V || v > t.GRID_HV1_V) return '#ef4444';
+  if (v < t.GRID_RECONNECT_LOW_V || v > t.GRID_RECONNECT_HIGH_V) return '#f59e0b';
   return '#10b981';
 }
 
@@ -41,9 +43,10 @@ function buildVoltageBarHTML(gridVoltages, loadVoltages, isGridOn) {
     }
   }
 
+  const t = CONFIG.THRESHOLDS;
   const statusTag = allDead
     ? `<span style="color:#f87171;">0 В (вимкнено ДТЕК)</span>`
-    : `<span style="color:var(--text-muted);">Норма: 205–248 В (відсічка &lt;195 / &gt;255)</span>`;
+    : `<span style="color:var(--text-muted);">Норма: ${t.GRID_RECONNECT_LOW_V}–${t.GRID_RECONNECT_HIGH_V} В (відсічка &lt;${t.GRID_LV1_V} / &gt;${t.GRID_HV1_V})</span>`;
 
   const measuredTime = (typeof gridVoltages.ts === 'number' && gridVoltages.ts > 0)
     ? formatKyivTime(gridVoltages.ts)
@@ -562,7 +565,7 @@ export function renderHTML(data) {
         <div class="card" style="text-align:center; padding:24px 16px;">
           <div style="font-size:1.8rem; margin-bottom:6px;">🟢</div>
           <div style="font-size:0.92rem; font-weight:700; color:var(--text-main);">Спрацювань захисту по напрузі поки немає</div>
-          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Напруга міської мережі трималась у межах норми (195–255 В).</div>
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;">Напруга міської мережі трималась у межах норми (${CONFIG.THRESHOLDS.GRID_LV1_V}–${CONFIG.THRESHOLDS.GRID_HV1_V} В).</div>
         </div>
       ` : voltageCharts.map((outage, idx) => renderOutageCardHTML(outage, `outageGrad_v_${idx}`)).join('')}
     </div>
