@@ -149,9 +149,6 @@ export default {
     } else {
       const data = await getCachedTelemetry(env, ctx, isBypass);
       const cacheAgeSec = Math.max(0, globalCache.getAgeSec());
-      if (ctx && ctx.waitUntil) {
-        ctx.waitUntil(processTelegramNotifications(data, env));
-      }
       payload = (route.kind === "html") ? renderHTML(data) : data;
       headers = {
         ...SECURITY_HEADERS,

@@ -314,6 +314,51 @@ test('Telegram Notification: processTelegramNotifications workflow', async (t) =
     assert.equal(sentMessages.length, 1);
     assert.ok(sentMessages[0].text.includes('Досягнуто захисний поріг інвертора (10%)'));
     assert.deepEqual(res11.state.sentAlerts, [10]);
+
+    // 12. Concurrent restoration calls + stale KV read must NOT duplicate restoration message
+    await processTelegramNotifications({ is_grid_on: true, battery_soc: 100 }, env);
+    sentMessages.length = 0;
+    await processTelegramNotifications({ is_grid_on: false, battery_soc: 55, current_outage: { startTimestampSec: 1794800000 } }, env);
+    await processTelegramNotifications({ is_grid_on: false, battery_soc: 38 }, env);
+    assert.equal(sentMessages.length, 1, 'Expected 40% threshold alert during outage');
+    sentMessages.length = 0;
+
+    // Two concurrent restoration dispatches against same env/KV
+    await Promise.all([
+      processTelegramNotifications({
+        is_grid_on: true,
+        battery_soc: 29,
+        charge_power_kw: 9.3,
+        use_power_kw: 9.2,
+        journal: { validEvents: [{ durationMin: 125 }] }
+      }, env),
+      processTelegramNotifications({
+        is_grid_on: true,
+        battery_soc: 29,
+        charge_power_kw: 9.3,
+        use_power_kw: 9.2,
+        journal: { validEvents: [{ durationMin: 125 }] }
+      }, env)
+    ]);
+    assert.equal(sentMessages.length, 1, 'Concurrent restoration dispatches must send only 1 message');
+
+    // Simulate stale KV eventual-consistency returning old isOutage=true state on same isolate
+    const staleKv = {
+      staleVal: JSON.stringify({
+        isOutage: true,
+        outageStartTimestampSec: 1794800000,
+        notifiedLevels: [80, 60, 40],
+        sentAlerts: [40],
+        updatedAtMs: 1000
+      }),
+      async get() { return JSON.parse(this.staleVal); },
+      async put() { /* intentional stale edge simulation */ }
+    };
+    const staleEnv = { ...env, NOTIFY_KV: staleKv };
+    sentMessages.length = 0;
+    await processTelegramNotifications({ is_grid_on: true, battery_soc: 29, charge_power_kw: 9.3, use_power_kw: 9.2 }, staleEnv);
+    await processTelegramNotifications({ is_grid_on: true, battery_soc: 29, charge_power_kw: 9.3, use_power_kw: 9.2 }, staleEnv);
+    assert.equal(sentMessages.length, 1, 'In-memory fresher state guard must prevent duplicate alerts under KV eventual consistency');
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -1469,12 +1469,12 @@ describe('Error 1101 Cross-Request Promise Protection (v1.6.4)', () => {
       };
       const env = { DEYE_TOKEN: 't', DEYE_STATION_ID: 's' };
 
-      // First stale request schedules one background SWR refresh (+ telegram notification task)
+      // First stale request schedules one background SWR refresh (Telegram alerts run only in scheduled cron)
       const res1 = await worker.fetch(new Request('https://power.osbbnd.workers.dev/api/status'), env, ctx);
       assert.equal(res1.status, 200);
       assert.equal(globalCache.isRefreshing(), true, 'isRefreshing() must be true while SWR fetch is in flight');
       const countAfterReq1 = backgroundPromises.length;
-      assert.equal(countAfterReq1, 2, 'First request should schedule 1 SWR refresh + 1 telegram notification task');
+      assert.equal(countAfterReq1, 1, 'First request should schedule only 1 SWR refresh task (no telegram task on HTTP fetch)');
       const fetchesAfterReq1 = fetchCalls;
 
       // Second concurrent request sees isRefreshing() === true and serves stale snapshot cleanly without awaiting req1 promise
@@ -1482,7 +1482,7 @@ describe('Error 1101 Cross-Request Promise Protection (v1.6.4)', () => {
       assert.equal(res2.status, 200);
       const body2 = await res2.json();
       assert.equal(body2.battery_soc, 85);
-      assert.equal(backgroundPromises.length, countAfterReq1 + 1, 'Second request must only schedule telegram task and skip duplicate SWR refresh while isRefreshing() is true');
+      assert.equal(backgroundPromises.length, countAfterReq1, 'Second request must skip duplicate SWR refresh while isRefreshing() is true');
       assert.equal(fetchCalls, fetchesAfterReq1, 'Second request must not trigger duplicate upstream fetches');
 
       // Let the background fetch finish cleanly

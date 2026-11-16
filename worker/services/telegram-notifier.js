@@ -102,6 +102,22 @@ export function formatRestorationMessage(data, previousOutageDurMin) {
 🌐 <a href="https://power.osbbnd.workers.dev">Статус енергопостачання онлайн</a>`;
 }
 
+const notificationLocks = new WeakMap();
+const latestStateByKv = new WeakMap();
+
+async function withKvSerialization(kv, fn) {
+  if (!kv || typeof kv !== 'object') return fn();
+  const prev = notificationLocks.get(kv) || Promise.resolve();
+  const next = prev.catch(() => {}).then(fn);
+  const cleanup = next.finally(() => {
+    if (notificationLocks.get(kv) === cleanup) {
+      notificationLocks.delete(kv);
+    }
+  });
+  notificationLocks.set(kv, cleanup);
+  return next;
+}
+
 /**
  * Головний обробник перевірки та відправки сповіщень.
  * @param {Object} data Дані поточної телеметрії
@@ -116,106 +132,114 @@ export async function processTelegramNotifications(data, env) {
     return { notified: false, reason: 'missing_credentials' };
   }
 
-  // Зчитуємо збережений стан з KV (або дефолт)
-  let state = {
-    isOutage: false,
-    outageStart: null,
-    outageStartTimestampSec: null,
-    notifiedLevels: [],
-    lastNotifiedThreshold: null,
-    lastOutageDurMin: 0
-  };
+  return withKvSerialization(kv, async () => {
+    // Зчитуємо збережений стан з KV (з урахуванням свіжішого локального стану при eventual consistency)
+    let state = {
+      isOutage: false,
+      outageStart: null,
+      outageStartTimestampSec: null,
+      notifiedLevels: [],
+      lastNotifiedThreshold: null,
+      lastOutageDurMin: 0,
+      updatedAtMs: 0
+    };
 
-  if (kv) {
-    try {
-      const stored = await kv.get('notification_state', { type: 'json' });
-      if (stored) {
-        state = typeof stored === 'string' ? JSON.parse(stored) : stored;
-      }
-    } catch (e) {
-      console.error('Failed to read notification_state from KV:', e);
-    }
-  }
-
-  if (!Array.isArray(state.notifiedLevels)) {
-    state.notifiedLevels = [];
-  }
-  if (!Array.isArray(state.sentAlerts)) {
-    state.sentAlerts = [];
-  }
-
-  const isGridOn = Boolean(data.is_grid_on);
-  const currentSoc = Number.isFinite(data.battery_soc) ? data.battery_soc : 100;
-  let stateChanged = false;
-
-  // 1. Сценарій: Мережа відсутня (робота на батареї)
-  if (!isGridOn) {
-    if (!state.isOutage) {
-      state.isOutage = true;
-      state.outageStart = data.current_outage?.start || data.updated_at || null;
-      // Чистий UTC таймстемп початку відключення
-      state.outageStartTimestampSec = data.current_outage?.startTimestampSec || nowUtcSec();
-      state.outageStartSoc = currentSoc;
-
-      // Усі пороги, які СТРОГО ВИЩІ за стартовий заряд батареї на момент початку відключення,
-      // позначаємо як уже пройдені (щоб бот не наздоганяв старі неактуальні пороги при старті з неповної батареї)
-      state.notifiedLevels = NOTIFICATION_THRESHOLDS.filter(t => t > currentSoc);
-      state.sentAlerts = [];
-      state.lastNotifiedThreshold = null;
-      stateChanged = true;
-    }
-
-    // Шукаємо пороги розряду (від 80 до 10)
-    // Якщо заряд перескочив одразу кілька порогів (наприклад, з 65% до 38%),
-    // ми повинні знайти найактуальніший (найнижчий) досягнутий поріг (наприклад, 40% з попередженням про ліфти)
-    // і позначити всі вищі пропущені пороги (60%) як пройдені, щоб не слати застарілі сповіщення.
-    const reachedThresholds = NOTIFICATION_THRESHOLDS.filter(
-      t => currentSoc <= t && !state.notifiedLevels.includes(t)
-    );
-
-    if (reachedThresholds.length > 0) {
-      // Найактуальніший поріг — це найменший серед щойно досягнутих
-      const targetThreshold = reachedThresholds[reachedThresholds.length - 1];
-
-      const msg = formatThresholdMessage(targetThreshold, data);
-      const sent = await sendTelegramMessage(botToken, chatId, msg);
-      if (sent) {
-        for (const t of reachedThresholds) {
-          if (!state.notifiedLevels.includes(t)) {
-            state.notifiedLevels.push(t);
-          }
+    if (kv) {
+      try {
+        const stored = await kv.get('notification_state', { type: 'json' });
+        if (stored) {
+          state = typeof stored === 'string' ? JSON.parse(stored) : stored;
         }
-        state.sentAlerts.push(targetThreshold);
-        state.lastNotifiedThreshold = targetThreshold;
+      } catch (e) {
+        console.error('Failed to read notification_state from KV:', e);
+      }
+      const memState = latestStateByKv.get(kv);
+      if (memState && (memState.updatedAtMs || 0) > (state.updatedAtMs || 0)) {
+        state = { ...memState };
+      }
+    }
+
+    if (!Array.isArray(state.notifiedLevels)) {
+      state.notifiedLevels = [];
+    }
+    if (!Array.isArray(state.sentAlerts)) {
+      state.sentAlerts = [];
+    }
+
+    const persistState = async (nextState) => {
+      nextState.updatedAtMs = Date.now();
+      if (kv) {
+        latestStateByKv.set(kv, { ...nextState, notifiedLevels: [...nextState.notifiedLevels], sentAlerts: [...nextState.sentAlerts] });
+        try {
+          await kv.put('notification_state', JSON.stringify(nextState));
+        } catch (e) {
+          console.error('Failed to save notification_state to KV:', e);
+        }
+      }
+    };
+
+    const isGridOn = Boolean(data.is_grid_on);
+    const currentSoc = Number.isFinite(data.battery_soc) ? data.battery_soc : 100;
+    let stateChanged = false;
+
+    // 1. Сценарій: Мережа відсутня (робота на батареї)
+    if (!isGridOn) {
+      if (!state.isOutage) {
+        state.isOutage = true;
+        state.outageStart = data.current_outage?.start || data.updated_at || null;
+        state.outageStartTimestampSec = data.current_outage?.startTimestampSec || nowUtcSec();
+        state.outageStartSoc = currentSoc;
+        state.notifiedLevels = NOTIFICATION_THRESHOLDS.filter(t => t > currentSoc);
+        state.sentAlerts = [];
+        state.lastNotifiedThreshold = null;
         stateChanged = true;
       }
+
+      const reachedThresholds = NOTIFICATION_THRESHOLDS.filter(
+        t => currentSoc <= t && !state.notifiedLevels.includes(t)
+      );
+
+      if (reachedThresholds.length > 0) {
+        const targetThreshold = reachedThresholds[reachedThresholds.length - 1];
+        const msg = formatThresholdMessage(targetThreshold, data);
+        const sent = await sendTelegramMessage(botToken, chatId, msg);
+        if (sent) {
+          for (const t of reachedThresholds) {
+            if (!state.notifiedLevels.includes(t)) {
+              state.notifiedLevels.push(t);
+            }
+          }
+          state.sentAlerts.push(targetThreshold);
+          state.lastNotifiedThreshold = targetThreshold;
+          stateChanged = true;
+        }
+      }
+
+      if (stateChanged) {
+        await persistState(state);
+      }
     }
-  } 
-  // 2. Сценарій: Мережа відновлена (робота від міста)
-  else {
-    if (state.isOutage) {
-      // Сповіщення про відновлення мережі надсилається виключно тоді,
-      // коли під час цього відключення було надіслано хоча б одне порогове сповіщення з рівнем заряду
-      // (тобто мешканці були попереджені про аварійне використання батареї: state.sentAlerts.length > 0)
+    // 2. Сценарій: Мережа відновлена (робота від міста)
+    else if (state.isOutage) {
       const hadDischargeAlerts = Boolean(state.sentAlerts && state.sentAlerts.length > 0);
       const nowSec = nowUtcSec();
+      const outageKey = String(state.outageStartTimestampSec || state.outageStart || '');
+      const isDuplicateRestore = Boolean(
+        outageKey &&
+        state.lastRestoredOutageKey === outageKey &&
+        (nowSec - (state.lastRestorationSentSec || 0)) < 300
+      );
 
-      // Пріоритет 1: точна тривалість щойно завершеного відключення з журналу інвертора
       const lastCompletedEvent = data.journal?.validEvents?.[data.journal.validEvents.length - 1];
       let durMin = (lastCompletedEvent && Number(lastCompletedEvent.durationMin) > 0)
         ? Number(lastCompletedEvent.durationMin)
         : 0;
 
-      // Пріоритет 2: розрахунок за мітками реального часу відстеження (чистий UTC)
       if (!durMin && state.outageStartTimestampSec) {
         durMin = Math.max(1, Math.round((nowSec - state.outageStartTimestampSec) / 60));
       }
 
-      if (hadDischargeAlerts) {
-        const msg = formatRestorationMessage(data, durMin);
-        await sendTelegramMessage(botToken, chatId, msg);
-      }
-
+      // Спочатку фіксуємо скидання стану в KV, і лише потім шлемо повідомлення (запобігає гонці/дублям)
       state.isOutage = false;
       state.outageStart = null;
       state.outageStartTimestampSec = null;
@@ -224,18 +248,19 @@ export async function processTelegramNotifications(data, env) {
       state.sentAlerts = [];
       state.lastNotifiedThreshold = null;
       state.lastOutageDurMin = durMin;
+      if (hadDischargeAlerts && !isDuplicateRestore) {
+        state.lastRestoredOutageKey = outageKey;
+        state.lastRestorationSentSec = nowSec;
+      }
       stateChanged = true;
-    }
-  }
+      await persistState(state);
 
-  // Зберігаємо оновлений стан в KV
-  if (kv && stateChanged) {
-    try {
-      await kv.put('notification_state', JSON.stringify(state));
-    } catch (e) {
-      console.error('Failed to save notification_state to KV:', e);
+      if (hadDischargeAlerts && !isDuplicateRestore) {
+        const msg = formatRestorationMessage(data, durMin);
+        await sendTelegramMessage(botToken, chatId, msg);
+      }
     }
-  }
 
-  return { notified: stateChanged, state };
+    return { notified: stateChanged, state };
+  });
 }
