@@ -146,7 +146,7 @@ describe('Chart & HTML Rendering', () => {
     assert.ok(html.includes('ЗАЛИШОК АВТОНОМНОСТІ'));
     assert.ok(html.includes('Повний резерв при 100% АКБ'));
     assert.ok(html.includes('Автооновлення кожні 5 хв'));
-    assert.ok(html.includes('setTimeout(() => location.reload(), 300000)'));
+    assert.ok(html.includes('setTimeout(() => window.triggerFreshReload(), 300000)'));
     assert.ok(!html.includes('undefined'));
     assert.ok(!html.includes('NaN'));
   });
@@ -1726,5 +1726,199 @@ describe('30-Day Monthly Archive API & Modal UI (v1.7.0)', () => {
       globalThis.fetch = originalFetch;
       globalCache.clear();
     }
+  });
+});
+
+describe('Monotonic Cache-Aside & SWR Refresh Policy', () => {
+  test('TelemetryCache.setRecent enforces monotonic timestamps unless force=true', () => {
+    const TelemetryCache = globalCache.constructor;
+    const cache = new TelemetryCache();
+    const newerTs = Date.now();
+    const olderTs = newerTs - 120000;
+
+    assert.equal(cache.setRecent({ battery_soc: 90 }, newerTs), true);
+    assert.equal(cache.getTimestamp(), newerTs);
+    assert.equal(cache.getRecent().generated_at_ts, newerTs);
+
+    // Older timestamp without force must be ignored
+    assert.equal(cache.setRecent({ battery_soc: 50 }, olderTs), false);
+    assert.equal(cache.getRecent().battery_soc, 90);
+    assert.equal(cache.getTimestamp(), newerTs);
+
+    // Older timestamp with force=true overrides intentionally
+    assert.equal(cache.setRecent({ battery_soc: 50 }, olderTs, { force: true }), true);
+    assert.equal(cache.getRecent().battery_soc, 50);
+    assert.equal(cache.getTimestamp(), olderTs);
+  });
+
+  test('SWR response returns no-store Cache-Control and never writes stale HTML into caches.default', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    const originalCaches = globalThis.caches;
+    const putCalls = [];
+
+    try {
+      globalCache.setRecent({
+        updated_at: '14:00',
+        generated_at_ts: Date.now() - 120000,
+        battery_soc: 82,
+        battery_voltage: 641.0,
+        is_online: true,
+        is_grid_on: true,
+        is_charging: false,
+        use_power_kw: 4.0,
+        charge_power_kw: 0,
+        discharge_power_kw: 0,
+        grid_power_kw: 4.0,
+        discharge_24h_kwh: '1.0',
+        discharge_rate_pct: '0',
+        est_hours_formatted: '10 год',
+        est_time_until: '—',
+        full_est_hours_formatted: '10 год',
+        stat_active_kw: '5.0',
+        stat_night_kw: '4.0',
+        outages: [],
+        journal: { count: 0, totalHours24hFormatted: '0 хв', minSoc: 82 }
+      }, Date.now() - 120000);
+
+      globalThis.caches = {
+        default: {
+          async match() { return undefined; },
+          async put(req) { putCalls.push(req.url); }
+        }
+      };
+
+      globalThis.fetch = async (url) => {
+        const sUrl = String(url);
+        if (sUrl.includes('/station/display/')) {
+          return new Response(JSON.stringify({
+            batterySoc: 85,
+            batteryBv: 642.0,
+            gridRelayStatus: 'on',
+            wirePower: 4000,
+            batteryPower: 0,
+            usePower: 4000,
+            networkStatus: 'NORMAL',
+            lastUpdateTime: Math.floor(Date.now() / 1000)
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ records: [] }), { status: 200 });
+      };
+
+      const bgPromises = [];
+      const ctx = { waitUntil(p) { bgPromises.push(p); } };
+      const env = { DEYE_TOKEN: 't', DEYE_STATION_ID: 's' };
+
+      const res = await worker.fetch(new Request('https://power.osbbnd.workers.dev/'), env, ctx);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('Cache-Control'), 'no-store, no-cache, must-revalidate');
+      assert.equal(res.headers.get('X-Cache-Source'), 'memory-swr');
+      assert.equal(putCalls.length, 0, 'SWR stale response must NEVER be written into caches.default');
+
+      await Promise.all(bgPromises);
+      assert.equal(globalCache.getRecent().battery_soc, 85, 'Background refresh should update globalCache cleanly');
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.caches = originalCaches;
+      globalCache.clear();
+    }
+  });
+
+  test('?fresh=1 updates globalCache, overwrites caches.default canonical key, and sets edge cache headers', async () => {
+    globalCache.clear();
+    const originalFetch = globalThis.fetch;
+    const originalCaches = globalThis.caches;
+    const putRecords = [];
+
+    try {
+      // Even when globalCache is currently fresh (<60s), ?fresh=1 must replace it and refresh caches.default
+      globalCache.setRecent({
+        updated_at: '14:00',
+        generated_at_ts: Date.now() - 10000,
+        battery_soc: 70,
+        battery_voltage: 639.0,
+        is_online: true,
+        is_grid_on: true,
+        use_power_kw: 4.0,
+        grid_power_kw: 4.0,
+        charge_power_kw: 0,
+        discharge_power_kw: 0,
+        outages: [],
+        journal: { count: 0, totalHours24hFormatted: '0 хв', minSoc: 70 }
+      }, Date.now() - 10000);
+
+      globalThis.caches = {
+        default: {
+          async match() { return undefined; },
+          async put(req, res) {
+            putRecords.push({ url: req.url, cacheControl: res.headers.get('Cache-Control') });
+          }
+        }
+      };
+
+      globalThis.fetch = async (url) => {
+        const sUrl = String(url);
+        if (sUrl.includes('/station/display/')) {
+          return new Response(JSON.stringify({
+            batterySoc: 93,
+            batteryBv: 646.0,
+            gridRelayStatus: 'on',
+            wirePower: 4200,
+            batteryPower: 0,
+            usePower: 4200,
+            networkStatus: 'NORMAL',
+            lastUpdateTime: Math.floor(Date.now() / 1000)
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ records: [] }), { status: 200 });
+      };
+
+      const bgPromises = [];
+      const ctx = { waitUntil(p) { bgPromises.push(p); } };
+      const env = { DEYE_TOKEN: 't', DEYE_STATION_ID: 's' };
+
+      const res = await worker.fetch(new Request('https://power.osbbnd.workers.dev/?fresh=1'), env, ctx);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('Cache-Control'), 'public, max-age=0, s-maxage=45, must-revalidate');
+      assert.equal(res.headers.get('X-Cache-Source'), 'bypass');
+
+      await Promise.all(bgPromises);
+      assert.equal(globalCache.getRecent().battery_soc, 93, '?fresh=1 must unconditionally refresh globalCache even if previous entry was <60s');
+      assert.deepEqual(putRecords, [{
+        url: 'https://power.osbbnd.workers.dev/',
+        cacheControl: 'public, max-age=0, s-maxage=45, must-revalidate'
+      }], '?fresh=1 must overwrite canonical caches.default entry');
+    } finally {
+      globalThis.fetch = originalFetch;
+      globalThis.caches = originalCaches;
+      globalCache.clear();
+    }
+  });
+
+  test('renderHTML includes monotonic timestamp attribute, triggerFreshReload button, and localStorage guard', () => {
+    const html = renderHTML({
+      generated_at_ts: 1794930000123,
+      battery_soc: 95,
+      battery_voltage: 648,
+      is_grid_on: true,
+      use_power_kw: 4.5,
+      grid_power_kw: 4.5,
+      charge_power_kw: 0,
+      discharge_power_kw: 0,
+      discharge_24h_kwh: '2.0',
+      est_hours_formatted: '9 год',
+      est_time_until: '—',
+      full_est_hours_formatted: '9 год',
+      stat_active_kw: '7.5',
+      stat_night_kw: '6.5',
+      updated_at: '19:10',
+      journal: { count: 0, blackoutCount24h: 0, blackoutCountTotal: 0, voltageSagCount24h: 0, voltageSagCountTotal: 0 },
+      blackout_outages: [],
+      voltage_outages: []
+    });
+
+    assert.ok(html.includes('data-generated-ts="1794930000123"'));
+    assert.ok(html.includes('window.triggerFreshReload'));
+    assert.ok(html.includes('deye_last_seen_ts'));
   });
 });

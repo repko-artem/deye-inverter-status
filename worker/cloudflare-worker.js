@@ -15,73 +15,81 @@ import { resolveSystemState, SystemStateId, SystemState } from './domain/system-
 import { processTelegramNotifications } from './services/telegram-notifier.js';
 
 /**
- * Отримання телеметрії з багаторівневим кешуванням (Memory + KV Snapshot + SWR).
- * Кожен запит виконує fetch у власному I/O контексті (без спільного Promise між запитами),
- * щоб виключити помилку 1101 (handle_cross_request_promise_resolution) у Cloudflare Workers.
+ * Отримання телеметрії з монотонним багаторівневим кешуванням (Memory + KV Snapshot + SWR).
+ * Повертає `{ data, isStale, source }` щоб HTTP-шар ніколи не клав застарілу SWR-відповідь у Edge CDN.
  */
-async function getCachedTelemetry(env, ctx, isBypass = false) {
-  if (!isBypass && globalCache.isFresh()) {
-    return globalCache.getRecent();
-  }
-
-  const runLocalFetch = async () => {
+async function resolveTelemetry(env, ctx, isBypass = false) {
+  const runLocalFetch = async (forceKvWrite = false) => {
     globalCache.markRefreshStart();
     try {
       const service = new TelemetryService(env, globalCache, CONFIG);
-      const fresh = await service.getTelemetry();
-      if (!globalCache.isFresh()) {
-        globalCache.setRecent(fresh);
-      }
+      const fresh = await service.getTelemetry({ forceKvWrite });
+      globalCache.setRecent(fresh, fresh?.generated_at_ts || Date.now(), { force: true });
       return fresh;
     } finally {
       globalCache.markRefreshEnd();
     }
   };
 
+  if (isBypass) {
+    const data = await runLocalFetch(true);
+    return { data, isStale: false, source: 'bypass' };
+  }
+
+  if (globalCache.isFresh()) {
+    return { data: globalCache.getRecent(), isStale: false, source: 'memory' };
+  }
+
   const scheduleBackgroundRefresh = () => {
     if (ctx && ctx.waitUntil && !globalCache.isRefreshing()) {
-      ctx.waitUntil(runLocalFetch().catch(err => console.error('SWR refresh error:', err)));
+      ctx.waitUntil(runLocalFetch(false).catch(err => console.error('SWR refresh error:', err)));
     }
   };
 
-  if (!isBypass) {
-    const swrMaxAgeMs = CONFIG.CACHE.SWR_MAX_AGE_MS || 300000;
-    const recent = globalCache.getRecent();
-    if (recent && (globalCache.getAgeSec() * 1000) < swrMaxAgeMs) {
-      scheduleBackgroundRefresh();
-      return recent;
-    }
+  const swrMaxAgeMs = CONFIG.CACHE.SWR_MAX_AGE_MS || 180000;
+  const recent = globalCache.getRecent();
+  if (recent && (globalCache.getAgeSec() * 1000) < swrMaxAgeMs) {
+    scheduleBackgroundRefresh();
+    return { data: recent, isStale: true, source: 'memory-swr' };
+  }
 
-    if (!recent && env && env.NOTIFY_KV) {
-      try {
-        const snap = await env.NOTIFY_KV.get('telemetry_snapshot', { type: 'json' });
-        globalCache.setKvSnapshotMeta(snap?.timestamp || 0, snap?.data?.system_state || null);
-        if (snap && snap.data && snap.timestamp) {
-          globalCache.setRecent(snap.data, snap.timestamp);
-          const ageMs = Date.now() - snap.timestamp;
-          if (ageMs < CONFIG.CACHE.TTL_MS) {
-            return snap.data;
-          }
-          if (ageMs < swrMaxAgeMs) {
-            scheduleBackgroundRefresh();
-            return snap.data;
-          }
+  if (!recent && env && env.NOTIFY_KV) {
+    try {
+      const snap = await env.NOTIFY_KV.get('telemetry_snapshot', { type: 'json' });
+      globalCache.setKvSnapshotMeta(
+        snap?.timestamp || 0,
+        snap?.data?.system_state || null,
+        snap?.data?.battery_soc ?? null
+      );
+      if (snap && snap.data && snap.timestamp) {
+        if (!snap.data.generated_at_ts) {
+          snap.data.generated_at_ts = snap.timestamp;
         }
-      } catch (err) {
-        console.error('Failed to read telemetry_snapshot from KV:', err);
+        globalCache.setRecent(snap.data, snap.timestamp);
+        const ageMs = Date.now() - snap.timestamp;
+        if (ageMs < CONFIG.CACHE.TTL_MS) {
+          return { data: globalCache.getRecent(), isStale: false, source: 'kv-fresh' };
+        }
+        if (ageMs < swrMaxAgeMs) {
+          scheduleBackgroundRefresh();
+          return { data: globalCache.getRecent(), isStale: true, source: 'kv-swr' };
+        }
       }
+    } catch (err) {
+      console.error('Failed to read telemetry_snapshot from KV:', err);
     }
   }
 
-  return runLocalFetch();
+  const data = await runLocalFetch(false);
+  return { data, isStale: false, source: 'origin' };
 }
 
 /**
- * Прямий виклик збору телеметрії (для тестів та байпасу кешу)
+ * Прямий виклик збору телеметрії (для тестів, Cron та байпасу кешу)
  */
-export async function getFreshTelemetry(env) {
+export async function getFreshTelemetry(env, { forceKvWrite = false } = {}) {
   const service = new TelemetryService(env, globalCache, CONFIG);
-  return service.getTelemetry();
+  return service.getTelemetry({ forceKvWrite });
 }
 
 const SECURITY_HEADERS = Object.freeze({
@@ -90,6 +98,24 @@ const SECURITY_HEADERS = Object.freeze({
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "Permissions-Policy": "geolocation=(), camera=(), microphone=()"
 });
+
+function buildCacheHeaders(routeKind, { isStale = false, isPartial = false, cacheAgeSec = 0, source = 'memory' } = {}) {
+  if (routeKind === "archive") {
+    return {
+      ...SECURITY_HEADERS,
+      "Cache-Control": isPartial ? "no-store" : "public, max-age=120, s-maxage=120"
+    };
+  }
+  const edgeTtlSec = CONFIG.CACHE?.EDGE_TTL_SEC || 45;
+  return {
+    ...SECURITY_HEADERS,
+    "Cache-Control": isStale
+      ? "no-store, no-cache, must-revalidate"
+      : `public, max-age=0, s-maxage=${edgeTtlSec}, must-revalidate`,
+    "X-Server-Cache-Age": String(cacheAgeSec),
+    "X-Cache-Source": source
+  };
+}
 
 function resolveRoute(pathname) {
   if (pathname === "/api/archive") return { kind: "archive", cachePath: "/api/archive" };
@@ -135,31 +161,25 @@ export default {
     // 2. Виконання запиту за таблицею маршрутів (OCP)
     let payload;
     let headers;
-    let shouldEdgeCache = (!isBypass && isGetOrHead);
+    let shouldEdgeCache = false;
 
     if (route.kind === "archive") {
       const service = new TelemetryService(env, globalCache, CONFIG);
       payload = await service.getOutageArchive({ bypassCache: isBypass });
       const isPartial = Boolean(payload?.period?.isPartial);
-      if (isPartial) shouldEdgeCache = false;
-      headers = {
-        ...SECURITY_HEADERS,
-        "Cache-Control": isPartial ? "no-store" : "public, max-age=120, s-maxage=120"
-      };
+      shouldEdgeCache = (isGetOrHead && !isBypass && !isPartial);
+      headers = buildCacheHeaders("archive", { isPartial });
     } else {
-      const data = await getCachedTelemetry(env, ctx, isBypass);
+      const { data, isStale, source } = await resolveTelemetry(env, ctx, isBypass);
       const cacheAgeSec = Math.max(0, globalCache.getAgeSec());
+      shouldEdgeCache = (isGetOrHead && !isStale);
       payload = (route.kind === "html") ? renderHTML(data) : data;
-      headers = {
-        ...SECURITY_HEADERS,
-        "Cache-Control": "public, max-age=60, s-maxage=60, stale-while-revalidate=30",
-        "X-Server-Cache-Age": cacheAgeSec.toString()
-      };
+      headers = buildCacheHeaders(route.kind, { isStale, cacheAgeSec, source });
     }
 
     const response = buildRouteResponse(route.kind, payload, headers);
 
-    // 3. Зберігаємо повну GET/HEAD-відповідь у CDN-кеш Cloudflare під нормалізованим ключем
+    // 3. Зберігаємо тільки свіжу GET/HEAD-відповідь у CDN-кеш Cloudflare (включно з ?fresh=1 для оновлення CDN)
     if (shouldEdgeCache && cache && ctx && ctx.waitUntil) {
       ctx.waitUntil(cache.put(normalizedKey, response.clone()));
     }
@@ -178,6 +198,13 @@ export default {
     try {
       const data = await getFreshTelemetry(env);
       await processTelegramNotifications(data, env);
+      const cache = (typeof caches !== 'undefined' && caches.default) ? caches.default : null;
+      if (cache && typeof cache.delete === 'function') {
+        await Promise.allSettled([
+          cache.delete(new Request('https://power.osbbnd.workers.dev/', { method: 'GET' })),
+          cache.delete(new Request('https://power.osbbnd.workers.dev/api/status', { method: 'GET' }))
+        ]);
+      }
     } catch (err) {
       console.error('Scheduled notification error:', err);
     }

@@ -173,7 +173,7 @@ export class TelemetryService {
     return fromRecords;
   }
 
-  async getTelemetry() {
+  async getTelemetry({ forceKvWrite = false } = {}) {
     const currentUtcSec = nowUtcSec();
     const nowStr = formatKyivTime(currentUtcSec);
     const todayDateStr = formatKyivDate(currentUtcSec);
@@ -304,8 +304,10 @@ export class TelemetryService {
       rawResult.system_state = systemState.id;
 
       const snapshotTs = Date.now();
-      this.cache.setRecent(rawResult, snapshotTs);
-      await this.repository.saveTelemetrySnapshotIfNeeded(rawResult, snapshotTs);
+      rawResult.generated_at_ts = snapshotTs;
+      rawResult.device_ts = health.lastRecordSec || disp.lastUpdateTime || null;
+      this.cache.setRecent(rawResult, snapshotTs, { force: true });
+      await this.repository.saveTelemetrySnapshotIfNeeded(rawResult, snapshotTs, { force: forceKvWrite });
 
       return rawResult;
     } catch (e) {

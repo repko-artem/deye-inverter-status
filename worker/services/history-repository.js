@@ -340,6 +340,9 @@ export class HistoryRepository {
     try {
       const snap = await this.kv.get('telemetry_snapshot', { type: 'json' });
       if (snap && snap.data) {
+        if (!snap.data.generated_at_ts && snap.timestamp) {
+          snap.data.generated_at_ts = snap.timestamp;
+        }
         this.cache.setRecent(snap.data, snap.timestamp || Date.now());
         return snap.data;
       }
@@ -350,26 +353,35 @@ export class HistoryRepository {
   }
 
   /**
-   * Тротлінг-запис снепшоту в KV (кожні SNAPSHOT_KV_INTERVAL_MS або при зміні system_state).
+   * Тротлінг-запис снепшоту в KV (кожні SNAPSHOT_KV_INTERVAL_MS, при зміні system_state або SOC, чи force).
    */
-  async saveTelemetrySnapshotIfNeeded(data, timestamp = Date.now()) {
+  async saveTelemetrySnapshotIfNeeded(data, timestamp = Date.now(), { force = false } = {}) {
     if (!this.kv) return;
     try {
       let kvMeta = this.cache.getKvSnapshotMeta();
       if (kvMeta === null) {
         const existingSnap = await this.kv.get('telemetry_snapshot', { type: 'json' });
-        this.cache.setKvSnapshotMeta(existingSnap?.timestamp || 0, existingSnap?.data?.system_state || null);
+        this.cache.setKvSnapshotMeta(
+          existingSnap?.timestamp || 0,
+          existingSnap?.data?.system_state || null,
+          existingSnap?.data?.battery_soc ?? null
+        );
         kvMeta = this.cache.getKvSnapshotMeta();
       }
 
-      const minIntervalMs = this.config.CACHE?.SNAPSHOT_KV_INTERVAL_MS ?? (20 * 60 * 1000);
+      const minIntervalMs = this.config.CACHE?.SNAPSHOT_KV_INTERVAL_MS ?? (4 * 60 * 1000);
       const elapsedMs = timestamp - (kvMeta?.timestamp || 0);
       const stateChanged = Boolean(kvMeta?.systemState && kvMeta.systemState !== data.system_state);
-      const shouldWriteSnapshot = !kvMeta?.timestamp || elapsedMs >= minIntervalMs || stateChanged;
+      const socChanged = Boolean(
+        typeof kvMeta?.batterySoc === 'number' &&
+        typeof data.battery_soc === 'number' &&
+        kvMeta.batterySoc !== data.battery_soc
+      );
+      const shouldWriteSnapshot = Boolean(force) || !kvMeta?.timestamp || elapsedMs >= minIntervalMs || stateChanged || socChanged;
 
       if (shouldWriteSnapshot) {
         await this.kv.put('telemetry_snapshot', JSON.stringify({ timestamp, data }));
-        this.cache.setKvSnapshotMeta(timestamp, data.system_state);
+        this.cache.setKvSnapshotMeta(timestamp, data.system_state, data.battery_soc ?? null);
       }
     } catch (err) {
       console.error('Failed to save telemetry_snapshot to KV:', err);

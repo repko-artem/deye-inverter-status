@@ -346,7 +346,7 @@ export function renderHTML(data) {
     }
   </style>
 </head>
-<body>
+<body data-generated-ts="${Number(data.generated_at_ts) || 0}">
   <div class="container">
     <div class="header">
       <div class="title-block">
@@ -586,7 +586,7 @@ export function renderHTML(data) {
       <div style="font-size:0.68rem; opacity:0.65; margin: 3px 0 6px;">
         ${isOnline ? 'Автооновлення кожні 5 хв' : 'Опитування хмари кожні 5 хв (очікування сигналу від інвертора)'}
       </div>
-      <button class="btn" onclick="location.reload()">🔄 Оновити дані</button>
+      <button id="refresh-data-btn" class="btn" onclick="window.triggerFreshReload(this)">🔄 Оновити дані</button>
       <div style="margin-top:6px; font-size:0.68rem; opacity:0.55;">ОСББ «Новодарницьке» • Моніторинг 24/7</div>
       <div style="font-size:0.58rem; opacity:0.35; margin-top:3px; letter-spacing:0.5px;"><span title="Версія системи">v${data.version || '1.2.0'}</span></div>
     </div>
@@ -877,7 +877,42 @@ export function renderHTML(data) {
       }
     })();
 
-    setTimeout(() => location.reload(), 300000);
+    (function initMonotonicRefreshController() {
+      window.triggerFreshReload = function(btn) {
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = '⏳ Оновлюємо...';
+        }
+        window.location.replace(window.location.pathname + '?fresh=1');
+      };
+
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const isFreshReq = urlParams.get('fresh') === '1' || urlParams.get('bypass') === '1';
+        if (isFreshReq && window.history && typeof window.history.replaceState === 'function') {
+          window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+        }
+
+        const pageTs = Number(document.body.getAttribute('data-generated-ts') || 0);
+        const lastSeenTs = Number(localStorage.getItem('deye_last_seen_ts') || 0);
+
+        if (pageTs > 0) {
+          if (pageTs >= lastSeenTs) {
+            localStorage.setItem('deye_last_seen_ts', String(pageTs));
+            sessionStorage.removeItem('deye_monotonic_guard_ts');
+          } else if (!isFreshReq) {
+            const guardTs = Number(sessionStorage.getItem('deye_monotonic_guard_ts') || 0);
+            if (Date.now() - guardTs > 15000) {
+              sessionStorage.setItem('deye_monotonic_guard_ts', String(Date.now()));
+              window.location.replace(window.location.pathname + '?fresh=1');
+              return;
+            }
+          }
+        }
+      } catch (e) {}
+
+      setTimeout(() => window.triggerFreshReload(), 300000);
+    })();
   </script>
 </body>
 </html>`;

@@ -58,11 +58,16 @@ export class TelemetryCache {
     return this.kvSnapshotMeta;
   }
 
-  setKvSnapshotMeta(timestamp, systemState = null) {
+  setKvSnapshotMeta(timestamp, systemState = null, batterySoc = null) {
     this.kvSnapshotMeta = {
       timestamp: typeof timestamp === 'number' ? timestamp : 0,
-      systemState: systemState || null
+      systemState: systemState || null,
+      batterySoc: typeof batterySoc === 'number' ? batterySoc : null
     };
+  }
+
+  getTimestamp() {
+    return this.inMemoryTimestamp;
   }
 
   isFresh(now = Date.now()) {
@@ -77,9 +82,15 @@ export class TelemetryCache {
     return Math.round((now - this.inMemoryTimestamp) / 1000);
   }
 
-  setRecent(data, timestamp = Date.now()) {
-    this.inMemoryData = data;
+  setRecent(data, timestamp = Date.now(), { force = false } = {}) {
+    if (!force && this.inMemoryData && timestamp < this.inMemoryTimestamp) {
+      return false;
+    }
+    this.inMemoryData = (data && typeof data === 'object' && !data.generated_at_ts)
+      ? { ...data, generated_at_ts: timestamp }
+      : data;
     this.inMemoryTimestamp = timestamp;
+    return true;
   }
 
   getDayRecords(key) {
