@@ -32,6 +32,14 @@ export const OutageType = Object.freeze({
 /**
  * Допоміжна функція для накопичення статистики вхідної напруги мережі під час події відключення.
  */
+function createEmptyPhaseStats() {
+  return {
+    L1: { min: null, max: null, sum: 0, count: 0, avg: null },
+    L2: { min: null, max: null, sum: 0, count: 0, avg: null },
+    L3: { min: null, max: null, sum: 0, count: 0, avg: null }
+  };
+}
+
 function updateEventVoltageStats(curr, record, isPreTrigger = false) {
   if (!record || typeof record.v1 !== 'number' || typeof record.v2 !== 'number' || typeof record.v3 !== 'number') {
     return;
@@ -59,14 +67,17 @@ function updateEventVoltageStats(curr, record, isPreTrigger = false) {
       minPhase: null,
       maxGridV: null,
       maxPhase: null,
-      sum: 0,
-      count: 0,
-      avgGridV: null
+      phaseStats: createEmptyPhaseStats()
     });
     for (const [phase, val] of phases) {
       if (val < 50) continue;
-      pt.sum += val;
-      pt.count += 1;
+      const ps = pt.phaseStats[phase];
+      ps.sum += val;
+      ps.count += 1;
+      if (ps.max === null || val > ps.max) ps.max = val;
+      if (ps.min === null || val < ps.min) ps.min = val;
+      ps.avg = Math.round((ps.sum / ps.count) * 10) / 10;
+
       if (pt.maxGridV === null || val > pt.maxGridV) {
         pt.maxGridV = val;
         pt.maxPhase = phase;
@@ -76,15 +87,19 @@ function updateEventVoltageStats(curr, record, isPreTrigger = false) {
         pt.minPhase = phase;
       }
     }
-    if (pt.count > 0) {
-      pt.avgGridV = Math.round((pt.sum / pt.count) * 10) / 10;
-    }
     return;
   }
 
+  const phaseStats = curr.phaseStats || (curr.phaseStats = createEmptyPhaseStats());
   for (const [phase, val] of phases) {
     if (val < 50) continue;
-    curr.voltageSum = (curr.voltageSum || 0) + val;
+    const ps = phaseStats[phase];
+    ps.sum += val;
+    ps.count += 1;
+    if (ps.max === null || val > ps.max) ps.max = val;
+    if (ps.min === null || val < ps.min) ps.min = val;
+    ps.avg = Math.round((ps.sum / ps.count) * 10) / 10;
+
     curr.voltageValueCount = (curr.voltageValueCount || 0) + 1;
     if (curr.maxGridV === null || val > curr.maxGridV) {
       curr.maxGridV = val;
@@ -95,9 +110,6 @@ function updateEventVoltageStats(curr, record, isPreTrigger = false) {
       curr.minPhase = phase;
     }
   }
-  if (curr.voltageValueCount > 0) {
-    curr.avgGridV = Math.round((curr.voltageSum / curr.voltageValueCount) * 10) / 10;
-  }
 }
 
 function finalizeEventVoltageStats(curr, config = CONFIG) {
@@ -107,33 +119,77 @@ function finalizeEventVoltageStats(curr, config = CONFIG) {
     if ((curr.voltageValueCount || 0) === 0) {
       curr.minGridV = pt.minGridV;
       curr.minPhase = pt.minPhase;
-      curr.avgGridV = pt.avgGridV;
       curr.maxGridV = pt.maxGridV;
       curr.maxPhase = pt.maxPhase;
+      curr.phaseStats = pt.phaseStats;
     } else {
       const { lowReconnect, highReconnect } = getGridVoltageBounds(config);
       if (pt.maxGridV !== null && pt.maxGridV >= highReconnect && (curr.maxGridV === null || pt.maxGridV > curr.maxGridV)) {
         curr.maxGridV = pt.maxGridV;
         curr.maxPhase = pt.maxPhase;
+        const ps = curr.phaseStats?.[pt.maxPhase];
+        if (ps && (ps.max === null || pt.maxGridV > ps.max)) {
+          ps.max = pt.maxGridV;
+        }
       }
       if (pt.minGridV !== null && pt.minGridV < lowReconnect && (curr.minGridV === null || pt.minGridV < curr.minGridV)) {
         curr.minGridV = pt.minGridV;
         curr.minPhase = pt.minPhase;
+        const ps = curr.phaseStats?.[pt.minPhase];
+        if (ps && (ps.min === null || pt.minGridV < ps.min)) {
+          ps.min = pt.minGridV;
+        }
       }
     }
   }
   delete curr._preTriggerStats;
-  delete curr.voltageSum;
   delete curr.voltageValueCount;
 }
 
-function computeSliceVoltageStats(rawSlice) {
-  const acc = { minGridV: null, minPhase: null, avgGridV: null, maxGridV: null, maxPhase: null, voltageSum: 0, voltageValueCount: 0 };
+function resolveProblemPhaseMetrics(curr) {
+  if (!curr) return;
+  let problemPhase = null;
+  let extremeType = null;
+
+  if (curr.voltageCause === 'OVERVOLTAGE') {
+    problemPhase = curr.maxPhase;
+    extremeType = 'MAX';
+  } else if (curr.voltageCause === 'UNDERVOLTAGE') {
+    problemPhase = curr.minPhase;
+    extremeType = 'MIN';
+  } else if (curr.maxGridV !== null && curr.minGridV !== null) {
+    const isHighSide = Math.abs(curr.maxGridV - 230) >= Math.abs(230 - curr.minGridV);
+    problemPhase = isHighSide ? curr.maxPhase : curr.minPhase;
+    extremeType = isHighSide ? 'MAX' : 'MIN';
+  }
+
+  const ps = problemPhase && curr.phaseStats ? curr.phaseStats[problemPhase] : null;
+  curr.problemPhase = problemPhase || null;
+  curr.extremeType = extremeType || null;
+  curr.avgGridV = ps ? ps.avg : null;
+  curr.extremeGridV = ps
+    ? (extremeType === 'MIN' ? ps.min : ps.max)
+    : (extremeType === 'MIN' ? curr.minGridV : (extremeType === 'MAX' ? curr.maxGridV : null));
+  delete curr.phaseStats;
+}
+
+function computeSliceVoltageStats(rawSlice, voltageCause = null) {
+  const acc = {
+    minGridV: null,
+    minPhase: null,
+    maxGridV: null,
+    maxPhase: null,
+    voltageCause,
+    problemPhase: null,
+    extremeType: null,
+    avgGridV: null,
+    extremeGridV: null
+  };
   for (const r of rawSlice) {
     updateEventVoltageStats(acc, r, false);
   }
-  delete acc.voltageSum;
-  delete acc.voltageValueCount;
+  finalizeEventVoltageStats(acc);
+  resolveProblemPhaseMetrics(acc);
   delete acc.voltageSampleCount;
   delete acc.zeroVoltageTicks;
   delete acc.lastGridVoltages;
@@ -308,9 +364,12 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG, options = 
           zeroVoltageTicks: 0,
           minGridV: null,
           minPhase: null,
-          avgGridV: null,
           maxGridV: null,
           maxPhase: null,
+          problemPhase: null,
+          extremeType: null,
+          avgGridV: null,
+          extremeGridV: null,
           lastGridVoltages: null
         };
         if (idx > 0) {
@@ -338,6 +397,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG, options = 
         const classification = classifyOutageEvent(curr, config);
         curr.eventType = classification.type;
         curr.voltageCause = classification.voltageCause || classification.type;
+        resolveProblemPhaseMetrics(curr);
         curr.eventLabel = classification.label;
         curr.eventBadgeColor = classification.badgeColor;
         curr.eventBadgeBg = classification.badgeBg;
@@ -417,6 +477,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG, options = 
         curr.eventDescription = 'Стійке відключення електромережі ДТЕК.';
       }
     }
+    resolveProblemPhaseMetrics(curr);
 
     if (curr.durationMin > config.THRESHOLDS.MIN_OUTAGE_MINUTES) {
       events.push(curr);
@@ -591,12 +652,15 @@ export function summarizeOutageMetrics(e, records, { includeSeries = false } = {
 
   const startSoc = e.startSoc ?? points[0].soc;
   const minSoc = e.minSoc ?? Math.min(...points.map(p => p.soc));
-  const sliceV = (e.minGridV == null || e.avgGridV == null || e.maxGridV == null)
-    ? computeSliceVoltageStats(rawSlice)
+  const sliceV = (e.avgGridV == null || e.extremeGridV == null)
+    ? computeSliceVoltageStats(rawSlice, e.voltageCause || e.eventType)
     : null;
+  const problemPhase = e.problemPhase ?? sliceV?.problemPhase ?? null;
+  const extremeType = e.extremeType ?? sliceV?.extremeType ?? null;
+  const avgGridV = e.avgGridV ?? sliceV?.avgGridV ?? null;
+  const extremeGridV = e.extremeGridV ?? sliceV?.extremeGridV ?? null;
   const minGridV = e.minGridV ?? sliceV?.minGridV ?? null;
   const minPhase = e.minPhase ?? sliceV?.minPhase ?? null;
-  const avgGridV = e.avgGridV ?? sliceV?.avgGridV ?? null;
   const maxGridV = e.maxGridV ?? sliceV?.maxGridV ?? null;
   const maxPhase = e.maxPhase ?? sliceV?.maxPhase ?? null;
 
@@ -607,9 +671,12 @@ export function summarizeOutageMetrics(e, records, { includeSeries = false } = {
     eventBadgeColor: e.eventBadgeColor || '#ef4444',
     eventBadgeBg: e.eventBadgeBg || 'rgba(239, 68, 68, 0.15)',
     eventDescription: e.eventDescription || '',
+    problemPhase,
+    extremeType,
+    avgGridV,
+    extremeGridV,
     minGridV,
     minPhase,
-    avgGridV,
     maxGridV,
     maxPhase,
     isOngoing: Boolean(e.isOngoing),

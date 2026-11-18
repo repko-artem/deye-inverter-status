@@ -1219,20 +1219,26 @@ describe('3-Phase Voltage Tracking & Outage Cause Classification', () => {
     assert.equal(evOver.eventType, 'VOLTAGE_SAG');
     assert.equal(evOver.voltageCause, 'OVERVOLTAGE');
     assert.ok(evOver.eventLabel.includes('Завищена напруга (L2: 259 В)'), `Got: ${evOver.eventLabel}`);
+    assert.equal(evOver.problemPhase, 'L2');
+    assert.equal(evOver.extremeType, 'MAX');
+    assert.equal(evOver.avgGridV, 252.1);
+    assert.equal(evOver.extremeGridV, 258.6);
     assert.equal(evOver.minGridV, 240);
     assert.equal(evOver.minPhase, 'L1');
     assert.equal(evOver.maxGridV, 258.6);
     assert.equal(evOver.maxPhase, 'L2');
-    assert.equal(evOver.avgGridV, 244.4);
 
     assert.equal(evUnder.eventType, 'VOLTAGE_SAG');
     assert.equal(evUnder.voltageCause, 'UNDERVOLTAGE');
     assert.ok(evUnder.eventLabel.includes('Занижена напруга (L3: 191 В)'), `Got: ${evUnder.eventLabel}`);
+    assert.equal(evUnder.problemPhase, 'L3');
+    assert.equal(evUnder.extremeType, 'MIN');
+    assert.equal(evUnder.avgGridV, 197.8);
+    assert.equal(evUnder.extremeGridV, 191.4);
     assert.equal(evUnder.minGridV, 191.4);
     assert.equal(evUnder.minPhase, 'L3');
     assert.equal(evUnder.maxGridV, 220);
     assert.equal(evUnder.maxPhase, 'L2');
-    assert.equal(evUnder.avgGridV, 210.6);
 
     assert.equal(evBlackout.eventType, 'BLACKOUT');
     assert.equal(evBlackout.voltageCause, 'BLACKOUT');
@@ -1381,19 +1387,20 @@ describe('3-Phase Voltage Tracking & Outage Cause Classification', () => {
       assert.equal(data.voltage_outages.some(c => c.isOngoing), false, 'Ongoing event must not duplicate inside voltage_outages');
 
       for (const vc of data.voltage_outages) {
-        assert.equal(typeof vc.minGridV, 'number');
+        assert.equal(typeof vc.problemPhase, 'string');
+        assert.equal(typeof vc.extremeType, 'string');
         assert.equal(typeof vc.avgGridV, 'number');
-        assert.equal(typeof vc.maxGridV, 'number');
+        assert.equal(typeof vc.extremeGridV, 'number');
       }
-      assert.equal(data.voltage_outages[0].minGridV, 240);
-      assert.equal(data.voltage_outages[0].avgGridV, 246.7);
-      assert.equal(data.voltage_outages[0].maxGridV, 259);
+      assert.equal(data.voltage_outages[0].problemPhase, 'L2');
+      assert.equal(data.voltage_outages[0].extremeType, 'MAX');
+      assert.equal(data.voltage_outages[0].avgGridV, 259);
+      assert.equal(data.voltage_outages[0].extremeGridV, 259);
 
       const html = renderHTML(data);
-      assert.ok(html.includes('📉 Мін.'));
-      assert.ok(html.includes('⚖️ Сер. напруга'));
-      assert.ok(html.includes('📈 Макс.'));
-      assert.equal(html.split('⚖️ Сер. напруга').length - 1, 3, 'Min/Avg/Max voltage badges render only for voltage events (1 ongoing + 2 completed)');
+      assert.ok(html.includes('⚖️ Сер. напруга (L2)'));
+      assert.ok(html.includes('📈 Макс. напруга (L2)'));
+      assert.equal(html.split('⚖️ Сер. напруга').length - 1, 3, 'Problem phase Avg/Extreme badges render only for voltage events (1 ongoing + 2 completed)');
     } finally {
       globalThis.fetch = originalFetch;
       globalCache.clear();

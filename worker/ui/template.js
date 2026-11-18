@@ -70,9 +70,13 @@ function buildVoltageBarHTML(gridVoltages, loadVoltages, isGridOn) {
 
 function renderOutageCardHTML(outage, gradId) {
   const hasVoltageStats = outage.eventType === 'VOLTAGE_SAG' &&
-    typeof outage.minGridV === 'number' &&
     typeof outage.avgGridV === 'number' &&
-    typeof outage.maxGridV === 'number';
+    typeof outage.extremeGridV === 'number';
+  const isMinExtreme = outage.extremeType === 'MIN' || outage.voltageCause === 'UNDERVOLTAGE';
+  const phaseSuffix = outage.problemPhase ? ` (${outage.problemPhase})` : '';
+  const extremeLabel = isMinExtreme
+    ? `📉 Мін. напруга${phaseSuffix}`
+    : `📈 Макс. напруга${phaseSuffix}`;
   return `
       <div class="card">
         <!-- Outage Title & Duration -->
@@ -96,19 +100,15 @@ function renderOutageCardHTML(outage, gradId) {
         </div>
 
         ${hasVoltageStats ? `
-        <!-- Voltage Protection Stats: Min / Avg / Max Grid Voltage -->
-        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:8px;">
-          <div class="journal-badge" style="border-color:${getPhaseColor(outage.minGridV)}33;">
-            <div class="jb-val" style="color:${getPhaseColor(outage.minGridV)};">${Math.round(outage.minGridV)} <small style="font-size:0.65rem">В</small></div>
-            <div class="jb-lbl">📉 Мін.${outage.minPhase ? ` (${outage.minPhase})` : ' напруга'}</div>
-          </div>
+        <!-- Voltage Protection Stats: Problem Phase Average & Extreme -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:8px;">
           <div class="journal-badge" style="border-color:${getPhaseColor(outage.avgGridV)}33;">
             <div class="jb-val" style="color:${getPhaseColor(outage.avgGridV)};">${Math.round(outage.avgGridV)} <small style="font-size:0.65rem">В</small></div>
-            <div class="jb-lbl">⚖️ Сер. напруга</div>
+            <div class="jb-lbl">⚖️ Сер. напруга${phaseSuffix}</div>
           </div>
-          <div class="journal-badge" style="border-color:${getPhaseColor(outage.maxGridV)}33;">
-            <div class="jb-val" style="color:${getPhaseColor(outage.maxGridV)};">${Math.round(outage.maxGridV)} <small style="font-size:0.65rem">В</small></div>
-            <div class="jb-lbl">📈 Макс.${outage.maxPhase ? ` (${outage.maxPhase})` : ' напруга'}</div>
+          <div class="journal-badge" style="border-color:${getPhaseColor(outage.extremeGridV)}33;">
+            <div class="jb-val" style="color:${getPhaseColor(outage.extremeGridV)};">${Math.round(outage.extremeGridV)} <small style="font-size:0.65rem">В</small></div>
+            <div class="jb-lbl">${extremeLabel}</div>
           </div>
         </div>
         ` : ''}
@@ -734,9 +734,12 @@ export function renderHTML(data) {
       const badgeStyle = 'color:' + escHtml(ev.eventBadgeColor || (isBlackout ? '#fca5a5' : '#fcd34d')) + '; background:' + escHtml(ev.eventBadgeBg || 'rgba(245,158,11,0.15)') + ';';
       const socMain = (ev.socDrain > 0) ? (ev.startSoc + '% ➔ ' + ev.minSoc + '%') : ((ev.startSoc ?? 100) + '%');
       const socSub = (ev.socDrain > 0) ? ('-' + ev.socDrain + '% АКБ') : '0% розряду';
-      const hasVStats = !isBlackout && typeof ev.minGridV === 'number' && typeof ev.avgGridV === 'number' && typeof ev.maxGridV === 'number';
+      const hasVStats = !isBlackout && typeof ev.avgGridV === 'number' && typeof ev.extremeGridV === 'number';
+      const isMinExt = ev.extremeType === 'MIN' || ev.voltageCause === 'UNDERVOLTAGE';
+      const extPrefix = isMinExt ? 'мін. ' : 'макс. ';
+      const phaseTag = ev.problemPhase ? (escHtml(ev.problemPhase) + ': ') : '';
       const vStatsBadge = hasVStats
-        ? '<span class="badge-v-stats">Мін ' + Math.round(ev.minGridV) + ' В' + (ev.minPhase ? ' (' + escHtml(ev.minPhase) + ')' : '') + ' · Сер ' + Math.round(ev.avgGridV) + ' В · Макс ' + Math.round(ev.maxGridV) + ' В' + (ev.maxPhase ? ' (' + escHtml(ev.maxPhase) + ')' : '') + '</span>'
+        ? '<span class="badge-v-stats">' + phaseTag + 'сер. ' + Math.round(ev.avgGridV) + ' В · ' + extPrefix + Math.round(ev.extremeGridV) + ' В</span>'
         : '';
 
       return (
