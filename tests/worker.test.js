@@ -232,6 +232,49 @@ describe('Chart & HTML Rendering', () => {
     assert.ok(!html.includes('undefined'));
     assert.ok(!html.includes('NaN'));
   });
+
+  test('renderHTML omits duplicate full-reserve duration when current and 100% values match', () => {
+    const baseCharging = {
+      updated_at: '15:10',
+      battery_soc: 96,
+      battery_voltage: 649.0,
+      is_grid_on: true,
+      is_charging: true,
+      use_power_kw: 7.5,
+      charge_power_kw: 2.5,
+      discharge_power_kw: 0,
+      grid_power_kw: 10.0,
+      time_to_full_formatted: '40 хв',
+      time_to_full_est: '15:50',
+      est_hours_formatted: '6 год',
+      est_time_until: '21:10',
+      full_est_hours_formatted: '6 год',
+      stat_active_kw: '7.5',
+      stat_night_kw: '6.5',
+      discharge_24h_kwh: '10.0',
+      outages: [],
+      journal: { count: 0, totalHours24hFormatted: '0 хв' }
+    };
+
+    const htmlEqual = renderHTML(baseCharging);
+    assert.ok(htmlEqual.includes('Зараз запасу вистачить на <strong>~6 год</strong>.'));
+    assert.ok(!htmlEqual.includes('(при 100% — на'));
+
+    const htmlDiff = renderHTML({ ...baseCharging, est_hours_formatted: '5 год', full_est_hours_formatted: '6 год' });
+    assert.ok(htmlDiff.includes('Зараз запасу вистачить на <strong>~5 год</strong> (при 100% — на <strong>~6 год</strong>).'));
+
+    const htmlOutageEqual = renderHTML({
+      ...baseCharging,
+      is_grid_on: false,
+      is_charging: false,
+      charge_power_kw: 0,
+      discharge_power_kw: 7.5,
+      grid_power_kw: 0,
+      discharge_rate_pct: '11.5',
+      current_outage: { start: '15:00', durationMin: 10, startSoc: 99, dayLabel: 'Сьогодні' }
+    });
+    assert.ok(!htmlOutageEqual.includes('Повний резерв при 100% АКБ'));
+  });
 });
 
 describe('Autonomy Estimation (calculateAutonomy)', () => {

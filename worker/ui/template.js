@@ -198,6 +198,9 @@ export function renderHTML(data) {
     ? data.voltage_outages
     : rawOutages.filter(o => o && !o.isOngoing && o.eventType === 'VOLTAGE_SAG').slice(0, 3);
   const journal = data.journal || { count: 0, totalHoursFormatted: "0 хв", minSoc: 100 };
+  const curEstHours = String(data.est_hours_formatted || '').trim();
+  const fullEstHours = String(data.full_est_hours_formatted || '').trim();
+  const hasDistinctFullReserve = Boolean(fullEstHours && fullEstHours !== curEstHours);
   const currOutage = data.current_outage;
   const outageStartStr = currOutage ? (currOutage.dayLabel && currOutage.dayLabel !== 'Сьогодні' ? `(з ${currOutage.dayLabel} ${currOutage.start})` : `(з ${currOutage.start})`) : '';
   const outageDurStr = currOutage 
@@ -416,7 +419,7 @@ export function renderHTML(data) {
           <div class="forecast-main">~${data.time_to_full_formatted}</div>
           <div class="forecast-sub">
             Повний заряд орієнтовно о <strong>${data.time_to_full_est}</strong>.<br>
-            <span style="opacity:0.85">Зараз запасу вистачить на <strong>~${data.est_hours_formatted}</strong> (при 100% — на <strong>~${data.full_est_hours_formatted || data.est_hours_formatted}</strong>).</span>
+            <span style="opacity:0.85">Зараз запасу вистачить на <strong>~${data.est_hours_formatted}</strong>${hasDistinctFullReserve ? ` (при 100% — на <strong>~${fullEstHours}</strong>)` : ''}.</span>
             <div style="font-size:0.68rem; color:var(--text-muted); margin-top:4px; opacity:0.85;">*Розраховано за добовим графіком зміни дня і ночі (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} кВт вночі).</div>
           </div>
         ` : `
@@ -431,7 +434,7 @@ export function renderHTML(data) {
           <div class="forecast-main">~${data.est_hours_formatted}</div>
           <div class="forecast-sub">
             Орієнтовно <strong>${data.est_time_until}</strong>
-            <div style="font-size:0.75rem; margin-top:5px; opacity:0.9;">Повний резерв при 100% АКБ: <strong>~${data.full_est_hours_formatted || data.est_hours_formatted}</strong>.</div>
+            ${hasDistinctFullReserve ? `<div style="font-size:0.75rem; margin-top:5px; opacity:0.9;">Повний резерв при 100% АКБ: <strong>~${fullEstHours}</strong>.</div>` : ''}
             <div style="font-size:0.68rem; color:var(--text-muted); margin-top:4px; opacity:0.85;">*Оцінка враховує зміну споживання день/ніч (~${data.stat_active_kw} кВт вдень / ~${data.stat_night_kw} вночі) та поріг вимкнення 10%.</div>
           </div>
         `)}
