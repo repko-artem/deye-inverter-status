@@ -1219,10 +1219,20 @@ describe('3-Phase Voltage Tracking & Outage Cause Classification', () => {
     assert.equal(evOver.eventType, 'VOLTAGE_SAG');
     assert.equal(evOver.voltageCause, 'OVERVOLTAGE');
     assert.ok(evOver.eventLabel.includes('Завищена напруга (L2: 259 В)'), `Got: ${evOver.eventLabel}`);
+    assert.equal(evOver.minGridV, 240);
+    assert.equal(evOver.minPhase, 'L1');
+    assert.equal(evOver.maxGridV, 258.6);
+    assert.equal(evOver.maxPhase, 'L2');
+    assert.equal(evOver.avgGridV, 244.4);
 
     assert.equal(evUnder.eventType, 'VOLTAGE_SAG');
     assert.equal(evUnder.voltageCause, 'UNDERVOLTAGE');
     assert.ok(evUnder.eventLabel.includes('Занижена напруга (L3: 191 В)'), `Got: ${evUnder.eventLabel}`);
+    assert.equal(evUnder.minGridV, 191.4);
+    assert.equal(evUnder.minPhase, 'L3');
+    assert.equal(evUnder.maxGridV, 220);
+    assert.equal(evUnder.maxPhase, 'L2');
+    assert.equal(evUnder.avgGridV, 210.6);
 
     assert.equal(evBlackout.eventType, 'BLACKOUT');
     assert.equal(evBlackout.voltageCause, 'BLACKOUT');
@@ -1369,6 +1379,21 @@ describe('3-Phase Voltage Tracking & Outage Cause Classification', () => {
       assert.equal(data.blackout_outages.length, 3, 'All 3 completed DTEK blackouts must remain available despite more recent voltage trips');
       assert.equal(data.voltage_outages.length, 2, '2 completed voltage protection trips must be in voltage_outages (excluding ongoing)');
       assert.equal(data.voltage_outages.some(c => c.isOngoing), false, 'Ongoing event must not duplicate inside voltage_outages');
+
+      for (const vc of data.voltage_outages) {
+        assert.equal(typeof vc.minGridV, 'number');
+        assert.equal(typeof vc.avgGridV, 'number');
+        assert.equal(typeof vc.maxGridV, 'number');
+      }
+      assert.equal(data.voltage_outages[0].minGridV, 240);
+      assert.equal(data.voltage_outages[0].avgGridV, 246.7);
+      assert.equal(data.voltage_outages[0].maxGridV, 259);
+
+      const html = renderHTML(data);
+      assert.ok(html.includes('📉 Мін.'));
+      assert.ok(html.includes('⚖️ Сер. напруга'));
+      assert.ok(html.includes('📈 Макс.'));
+      assert.equal(html.split('⚖️ Сер. напруга').length - 1, 3, 'Min/Avg/Max voltage badges render only for voltage events (1 ongoing + 2 completed)');
     } finally {
       globalThis.fetch = originalFetch;
       globalCache.clear();

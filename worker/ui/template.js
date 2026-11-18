@@ -69,6 +69,10 @@ function buildVoltageBarHTML(gridVoltages, loadVoltages, isGridOn) {
 }
 
 function renderOutageCardHTML(outage, gradId) {
+  const hasVoltageStats = outage.eventType === 'VOLTAGE_SAG' &&
+    typeof outage.minGridV === 'number' &&
+    typeof outage.avgGridV === 'number' &&
+    typeof outage.maxGridV === 'number';
   return `
       <div class="card">
         <!-- Outage Title & Duration -->
@@ -90,6 +94,24 @@ function renderOutageCardHTML(outage, gradId) {
             </div>
           </div>
         </div>
+
+        ${hasVoltageStats ? `
+        <!-- Voltage Protection Stats: Min / Avg / Max Grid Voltage -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:8px;">
+          <div class="journal-badge" style="border-color:${getPhaseColor(outage.minGridV)}33;">
+            <div class="jb-val" style="color:${getPhaseColor(outage.minGridV)};">${Math.round(outage.minGridV)} <small style="font-size:0.65rem">В</small></div>
+            <div class="jb-lbl">📉 Мін.${outage.minPhase ? ` (${outage.minPhase})` : ' напруга'}</div>
+          </div>
+          <div class="journal-badge" style="border-color:${getPhaseColor(outage.avgGridV)}33;">
+            <div class="jb-val" style="color:${getPhaseColor(outage.avgGridV)};">${Math.round(outage.avgGridV)} <small style="font-size:0.65rem">В</small></div>
+            <div class="jb-lbl">⚖️ Сер. напруга</div>
+          </div>
+          <div class="journal-badge" style="border-color:${getPhaseColor(outage.maxGridV)}33;">
+            <div class="jb-val" style="color:${getPhaseColor(outage.maxGridV)};">${Math.round(outage.maxGridV)} <small style="font-size:0.65rem">В</small></div>
+            <div class="jb-lbl">📈 Макс.${outage.maxPhase ? ` (${outage.maxPhase})` : ' напруга'}</div>
+          </div>
+        </div>
+        ` : ''}
 
         <!-- Outage Stats: Peak & Average -->
         <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:12px;">
@@ -318,6 +340,7 @@ export function renderHTML(data) {
     .archive-cause-band { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 24px; }
     .badge-cause { font-size: 0.7rem; font-weight: 600; padding: 3px 8px; border-radius: 7px; line-height: 1.25; }
     .badge-live { font-size: 0.65rem; font-weight: 700; color: #fecaca; background: rgba(239,68,68,0.28); padding: 2px 6px; border-radius: 6px; letter-spacing: 0.03em; text-transform: uppercase; }
+    .badge-v-stats { font-size: 0.67rem; font-weight: 600; color: #cbd5e1; background: rgba(15,23,42,0.65); border: 1px solid rgba(255,255,255,0.08); padding: 2px 7px; border-radius: 6px; font-variant-numeric: tabular-nums; }
 
     .archive-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 8px; }
     .archive-metric-box { background: rgba(15,23,42,0.52); border: 1px solid rgba(255,255,255,0.05); border-radius: 9px; padding: 5px 6px; text-align: center; display: flex; flex-direction: column; justify-content: center; gap: 1px; }
@@ -711,6 +734,10 @@ export function renderHTML(data) {
       const badgeStyle = 'color:' + escHtml(ev.eventBadgeColor || (isBlackout ? '#fca5a5' : '#fcd34d')) + '; background:' + escHtml(ev.eventBadgeBg || 'rgba(245,158,11,0.15)') + ';';
       const socMain = (ev.socDrain > 0) ? (ev.startSoc + '% ➔ ' + ev.minSoc + '%') : ((ev.startSoc ?? 100) + '%');
       const socSub = (ev.socDrain > 0) ? ('-' + ev.socDrain + '% АКБ') : '0% розряду';
+      const hasVStats = !isBlackout && typeof ev.minGridV === 'number' && typeof ev.avgGridV === 'number' && typeof ev.maxGridV === 'number';
+      const vStatsBadge = hasVStats
+        ? '<span class="badge-v-stats">Мін ' + Math.round(ev.minGridV) + ' В' + (ev.minPhase ? ' (' + escHtml(ev.minPhase) + ')' : '') + ' · Сер ' + Math.round(ev.avgGridV) + ' В · Макс ' + Math.round(ev.maxGridV) + ' В' + (ev.maxPhase ? ' (' + escHtml(ev.maxPhase) + ')' : '') + '</span>'
+        : '';
 
       return (
         '<article class="' + cardClass + '">' +
@@ -725,6 +752,7 @@ export function renderHTML(data) {
           '<div class="archive-cause-band">' +
             '<span class="badge-cause" style="' + badgeStyle + '">' + escHtml(ev.eventLabel) + '</span>' +
             (ev.isOngoing ? '<span class="badge-live">● Зараз</span>' : '') +
+            vStatsBadge +
           '</div>' +
           '<footer class="archive-metrics">' +
             '<div class="archive-metric-box">' +

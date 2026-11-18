@@ -52,16 +52,92 @@ function updateEventVoltageStats(curr, record, isPreTrigger = false) {
     ['L2', record.v2],
     ['L3', record.v3]
   ];
+
+  if (isPreTrigger) {
+    const pt = curr._preTriggerStats || (curr._preTriggerStats = {
+      minGridV: null,
+      minPhase: null,
+      maxGridV: null,
+      maxPhase: null,
+      sum: 0,
+      count: 0,
+      avgGridV: null
+    });
+    for (const [phase, val] of phases) {
+      if (val < 50) continue;
+      pt.sum += val;
+      pt.count += 1;
+      if (pt.maxGridV === null || val > pt.maxGridV) {
+        pt.maxGridV = val;
+        pt.maxPhase = phase;
+      }
+      if (pt.minGridV === null || val < pt.minGridV) {
+        pt.minGridV = val;
+        pt.minPhase = phase;
+      }
+    }
+    if (pt.count > 0) {
+      pt.avgGridV = Math.round((pt.sum / pt.count) * 10) / 10;
+    }
+    return;
+  }
+
   for (const [phase, val] of phases) {
+    if (val < 50) continue;
+    curr.voltageSum = (curr.voltageSum || 0) + val;
+    curr.voltageValueCount = (curr.voltageValueCount || 0) + 1;
     if (curr.maxGridV === null || val > curr.maxGridV) {
       curr.maxGridV = val;
       curr.maxPhase = phase;
     }
-    if (val >= 50 && (curr.minGridV === null || val < curr.minGridV)) {
+    if (curr.minGridV === null || val < curr.minGridV) {
       curr.minGridV = val;
       curr.minPhase = phase;
     }
   }
+  if (curr.voltageValueCount > 0) {
+    curr.avgGridV = Math.round((curr.voltageSum / curr.voltageValueCount) * 10) / 10;
+  }
+}
+
+function finalizeEventVoltageStats(curr, config = CONFIG) {
+  if (!curr) return;
+  const pt = curr._preTriggerStats;
+  if (pt) {
+    if ((curr.voltageValueCount || 0) === 0) {
+      curr.minGridV = pt.minGridV;
+      curr.minPhase = pt.minPhase;
+      curr.avgGridV = pt.avgGridV;
+      curr.maxGridV = pt.maxGridV;
+      curr.maxPhase = pt.maxPhase;
+    } else {
+      const { lowReconnect, highReconnect } = getGridVoltageBounds(config);
+      if (pt.maxGridV !== null && pt.maxGridV >= highReconnect && (curr.maxGridV === null || pt.maxGridV > curr.maxGridV)) {
+        curr.maxGridV = pt.maxGridV;
+        curr.maxPhase = pt.maxPhase;
+      }
+      if (pt.minGridV !== null && pt.minGridV < lowReconnect && (curr.minGridV === null || pt.minGridV < curr.minGridV)) {
+        curr.minGridV = pt.minGridV;
+        curr.minPhase = pt.minPhase;
+      }
+    }
+  }
+  delete curr._preTriggerStats;
+  delete curr.voltageSum;
+  delete curr.voltageValueCount;
+}
+
+function computeSliceVoltageStats(rawSlice) {
+  const acc = { minGridV: null, minPhase: null, avgGridV: null, maxGridV: null, maxPhase: null, voltageSum: 0, voltageValueCount: 0 };
+  for (const r of rawSlice) {
+    updateEventVoltageStats(acc, r, false);
+  }
+  delete acc.voltageSum;
+  delete acc.voltageValueCount;
+  delete acc.voltageSampleCount;
+  delete acc.zeroVoltageTicks;
+  delete acc.lastGridVoltages;
+  return acc;
 }
 
 /**
@@ -232,6 +308,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG, options = 
           zeroVoltageTicks: 0,
           minGridV: null,
           minPhase: null,
+          avgGridV: null,
           maxGridV: null,
           maxPhase: null,
           lastGridVoltages: null
@@ -257,6 +334,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG, options = 
           Math.round((curr.endTimestampSec - curr.startTimestampSec) / 60)
         );
         curr.socDrain = Math.max(0, curr.startSoc - curr.minSoc);
+        finalizeEventVoltageStats(curr, config);
         const classification = classifyOutageEvent(curr, config);
         curr.eventType = classification.type;
         curr.voltageCause = classification.voltageCause || classification.type;
@@ -293,6 +371,7 @@ export function analyzeMultiDayOutages(records, now, config = CONFIG, options = 
     if (options && options.liveGridVoltages) {
       applyLiveGridVoltages(curr, options.liveGridVoltages);
     }
+    finalizeEventVoltageStats(curr, config);
 
     const { lv1, lowReconnect, highReconnect, hv1 } = getGridVoltageBounds(config);
     const hasOutOfBoundsVoltage = (
@@ -512,6 +591,14 @@ export function summarizeOutageMetrics(e, records, { includeSeries = false } = {
 
   const startSoc = e.startSoc ?? points[0].soc;
   const minSoc = e.minSoc ?? Math.min(...points.map(p => p.soc));
+  const sliceV = (e.minGridV == null || e.avgGridV == null || e.maxGridV == null)
+    ? computeSliceVoltageStats(rawSlice)
+    : null;
+  const minGridV = e.minGridV ?? sliceV?.minGridV ?? null;
+  const minPhase = e.minPhase ?? sliceV?.minPhase ?? null;
+  const avgGridV = e.avgGridV ?? sliceV?.avgGridV ?? null;
+  const maxGridV = e.maxGridV ?? sliceV?.maxGridV ?? null;
+  const maxPhase = e.maxPhase ?? sliceV?.maxPhase ?? null;
 
   const summary = {
     eventType: e.eventType || OutageType.BLACKOUT,
@@ -520,6 +607,11 @@ export function summarizeOutageMetrics(e, records, { includeSeries = false } = {
     eventBadgeColor: e.eventBadgeColor || '#ef4444',
     eventBadgeBg: e.eventBadgeBg || 'rgba(239, 68, 68, 0.15)',
     eventDescription: e.eventDescription || '',
+    minGridV,
+    minPhase,
+    avgGridV,
+    maxGridV,
+    maxPhase,
     isOngoing: Boolean(e.isOngoing),
     dateStr: e.dateStr || '',
     dayLabel: e.dayLabel || '',
