@@ -359,6 +359,218 @@ test('Telegram Notification: processTelegramNotifications workflow', async (t) =
     await processTelegramNotifications({ is_grid_on: true, battery_soc: 29, charge_power_kw: 9.3, use_power_kw: 9.2 }, staleEnv);
     await processTelegramNotifications({ is_grid_on: true, battery_soc: 29, charge_power_kw: 9.3, use_power_kw: 9.2 }, staleEnv);
     assert.equal(sentMessages.length, 1, 'In-memory fresher state guard must prevent duplicate alerts under KV eventual consistency');
+
+    // 13. Real incident (20.11 07:05–07:10): outage starts EXACTLY on a non-critical threshold (80, 60, 40, 20)
+    // without draining below it -> MUST NOT send threshold alert or restoration message!
+    for (const exactStartSoc of [80, 60, 40, 20]) {
+      const scenarioEnv = { ...env, NOTIFY_KV: createMockKv() };
+      sentMessages.length = 0;
+      const startRes = await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: exactStartSoc,
+        current_outage: { start: '07:05', durationMin: 5, startTimestampSec: Math.floor(Date.now() / 1000) - 300 }
+      }, scenarioEnv);
+      assert.equal(sentMessages.length, 0, `Must NOT alert when outage starts exactly at ${exactStartSoc}%`);
+      assert.ok(startRes.state.notifiedLevels.includes(exactStartSoc), `Starting threshold ${exactStartSoc}% must be pre-marked`);
+
+      await processTelegramNotifications({
+        is_grid_on: true,
+        battery_soc: exactStartSoc,
+        use_power_kw: 6.0,
+        charge_power_kw: 10.0,
+        journal: { validEvents: [{ durationMin: 5, startTimestampSec: Math.floor(Date.now() / 1000) - 300, endTimestampSec: Math.floor(Date.now() / 1000) }] }
+      }, scenarioEnv);
+      assert.equal(sentMessages.length, 0, `Must NOT send restoration message after zero-drain outage at ${exactStartSoc}%`);
+    }
+
+    // 14. Outage starts exactly at 60%, drains to 59% (silent), then reaches next threshold 40% -> notifies 40%
+    {
+      const env14 = { ...env, NOTIFY_KV: createMockKv() };
+      const tStart = Math.floor(Date.now() / 1000) - 600;
+      sentMessages.length = 0;
+
+      await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: 60,
+        current_outage: { start: '07:05', durationMin: 1, startTimestampSec: tStart }
+      }, env14);
+      assert.equal(sentMessages.length, 0);
+
+      await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: 59,
+        current_outage: { start: '07:05', durationMin: 5, startTimestampSec: tStart }
+      }, env14);
+      assert.equal(sentMessages.length, 0);
+
+      const res40 = await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: 40,
+        est_hours_formatted: '3 – 4 год',
+        use_power_kw: 6.5,
+        current_outage: { start: '07:05', durationMin: 45, startTimestampSec: tStart }
+      }, env14);
+      assert.equal(sentMessages.length, 1);
+      assert.ok(sentMessages[0].text.includes('Ліфти будуть відключені'));
+      assert.deepEqual(res40.state.sentAlerts, [40]);
+
+      sentMessages.length = 0;
+      await processTelegramNotifications({
+        is_grid_on: true,
+        battery_soc: 42,
+        charge_power_kw: 15.0,
+        use_power_kw: 6.0,
+        journal: { validEvents: [{ durationMin: 55, startTimestampSec: tStart, endTimestampSec: Math.floor(Date.now() / 1000) }] }
+      }, env14);
+      assert.equal(sentMessages.length, 1);
+      assert.ok(sentMessages[0].text.includes('Міську електромережу відновлено'));
+    }
+
+    // 15. Full overnight cascade (19–20.11):
+    // Cycle 1: 95% -> 79% (80% alert) -> 67% -> restore 145 min
+    // Recharge to 78%
+    // Cycle 2: 78% -> 60% (60% alert) -> 50% -> restore 150 min
+    // Recharge exactly to 60%
+    // Cycle 3: 60% -> 60% -> restore 5 min (complete silence!)
+    {
+      const env15 = { ...env, NOTIFY_KV: createMockKv() };
+      const baseSec = Math.floor(Date.now() / 1000) - 25000;
+      sentMessages.length = 0;
+
+      // Cycle 1
+      await processTelegramNotifications({ is_grid_on: false, battery_soc: 95, current_outage: { durationMin: 5, startTimestampSec: baseSec } }, env15);
+      await processTelegramNotifications({ is_grid_on: false, battery_soc: 79, current_outage: { durationMin: 70, startTimestampSec: baseSec } }, env15);
+      await processTelegramNotifications({ is_grid_on: false, battery_soc: 67, current_outage: { durationMin: 140, startTimestampSec: baseSec } }, env15);
+      assert.equal(sentMessages.length, 1);
+      assert.ok(sentMessages[0].text.includes('79%'));
+
+      sentMessages.length = 0;
+      await processTelegramNotifications({
+        is_grid_on: true,
+        battery_soc: 67,
+        charge_power_kw: 16.0,
+        use_power_kw: 5.5,
+        journal: { validEvents: [{ durationMin: 145, startTimestampSec: baseSec, endTimestampSec: Math.floor(Date.now() / 1000) - 120 }] }
+      }, env15);
+      assert.equal(sentMessages.length, 1);
+      assert.ok(sentMessages[0].text.includes('2 год 25 хв'));
+
+      // Partial recharge to 78%
+      sentMessages.length = 0;
+      await processTelegramNotifications({ is_grid_on: true, battery_soc: 78 }, env15);
+      assert.equal(sentMessages.length, 0);
+
+      // Cycle 2: starts at 78%, drops to 60%, restores 150 min
+      const c2Start = Math.floor(Date.now() / 1000) - 9100;
+      await processTelegramNotifications({ is_grid_on: false, battery_soc: 78, current_outage: { durationMin: 5, startTimestampSec: c2Start } }, env15);
+      assert.equal(sentMessages.length, 0);
+      await processTelegramNotifications({ is_grid_on: false, battery_soc: 60, current_outage: { durationMin: 80, startTimestampSec: c2Start } }, env15);
+      assert.equal(sentMessages.length, 1);
+      assert.ok(sentMessages[0].text.includes('60%'));
+
+      sentMessages.length = 0;
+      await processTelegramNotifications({
+        is_grid_on: true,
+        battery_soc: 50,
+        charge_power_kw: 16.0,
+        use_power_kw: 5.8,
+        journal: { validEvents: [{ durationMin: 150, startTimestampSec: c2Start, endTimestampSec: Math.floor(Date.now() / 1000) - 60 }] }
+      }, env15);
+      assert.equal(sentMessages.length, 1);
+      assert.ok(sentMessages[0].text.includes('2 год 30 хв'));
+
+      // Recharge to 60% and short Cycle 3 at 60% -> 60%
+      sentMessages.length = 0;
+      await processTelegramNotifications({ is_grid_on: true, battery_soc: 60 }, env15);
+      const c3Start = Math.floor(Date.now() / 1000) - 300;
+      await processTelegramNotifications({ is_grid_on: false, battery_soc: 60, current_outage: { durationMin: 5, startTimestampSec: c3Start } }, env15);
+      await processTelegramNotifications({
+        is_grid_on: true,
+        battery_soc: 60,
+        journal: { validEvents: [{ durationMin: 5, startTimestampSec: c3Start, endTimestampSec: Math.floor(Date.now() / 1000) }] }
+      }, env15);
+      assert.equal(sentMessages.length, 0, 'Short 0-drain cycle starting at 60% must produce zero Telegram notifications');
+    }
+
+    // 16. Protection against stale durationMin from old journal.validEvents on restoration
+    {
+      const env16 = { ...env, NOTIFY_KV: createMockKv() };
+      const nowSec = Math.floor(Date.now() / 1000);
+      const oldStart = nowSec - 10800;
+      const oldEnd = nowSec - 3600;
+      const currentStart = nowSec - 1200; // 20 min ago
+      sentMessages.length = 0;
+
+      await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: 82,
+        current_outage: { start: '08:00', durationMin: 2, startTimestampSec: currentStart }
+      }, env16);
+      await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: 79,
+        current_outage: { start: '08:00', durationMin: 15, startTimestampSec: currentStart }
+      }, env16);
+      assert.equal(sentMessages.length, 1);
+
+      sentMessages.length = 0;
+      await processTelegramNotifications({
+        is_grid_on: true,
+        battery_soc: 79,
+        use_power_kw: 6.0,
+        charge_power_kw: 10.0,
+        journal: {
+          validEvents: [
+            { durationMin: 150, startTimestampSec: oldStart, endTimestampSec: oldEnd }
+          ]
+        }
+      }, env16);
+      assert.equal(sentMessages.length, 1);
+      assert.ok(sentMessages[0].text.includes('20 хв'), `Expected 20 min fallback, got: ${sentMessages[0].text}`);
+      assert.ok(!sentMessages[0].text.includes('2 год 30 хв'), 'Must NOT use stale 150-min duration from old event');
+    }
+
+    // 17. Ignore Deye cloud errors (CLOUD_ERROR / CLOUD_UNAVAILABLE) + elapsedOutageMin fallback in formatThresholdMessage
+    {
+      const env17 = { ...env, NOTIFY_KV: createMockKv() };
+      sentMessages.length = 0;
+
+      const cloudErrRes1 = await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: 100,
+        system_state: 'CLOUD_ERROR',
+        offline_type: 'CLOUD_UNAVAILABLE'
+      }, env17);
+      assert.equal(cloudErrRes1.reason, 'cloud_error');
+      assert.equal(sentMessages.length, 0);
+
+      const cloudErrRes2 = await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: 10,
+        system_state: 'CLOUD_ERROR',
+        offline_type: 'CLOUD_ERROR'
+      }, env17);
+      assert.equal(cloudErrRes2.reason, 'cloud_error');
+      assert.equal(sentMessages.length, 0);
+      assert.equal(await env17.NOTIFY_KV.get('notification_state', 'json'), null, 'Cloud error must not mutate notification_state');
+
+      // Threshold duration fallback from state.outageStartTimestampSec when current_outage is null
+      const nowSec = Math.floor(Date.now() / 1000);
+      await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: 85,
+        current_outage: { start: '09:00', durationMin: 1, startTimestampSec: nowSec - 1500 } // 25 min ago
+      }, env17);
+      sentMessages.length = 0;
+      await processTelegramNotifications({
+        is_grid_on: false,
+        battery_soc: 79,
+        current_outage: null
+      }, env17);
+      assert.equal(sentMessages.length, 1);
+      assert.ok(sentMessages[0].text.includes('25 хв'), `Expected elapsed 25 хв fallback instead of "щойно", got: ${sentMessages[0].text}`);
+      assert.ok(!sentMessages[0].text.includes('щойно'));
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

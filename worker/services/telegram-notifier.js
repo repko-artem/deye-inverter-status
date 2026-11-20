@@ -7,6 +7,79 @@
 import { nowUtcSec } from '../domain/time.js';
 
 export const NOTIFICATION_THRESHOLDS = Object.freeze([80, 60, 40, 20, 10]);
+export const CRITICAL_SHUTDOWN_THRESHOLD = 10;
+const RESTORATION_DEDUP_WINDOW_SEC = 300;
+const EVENT_MATCH_TOLERANCE_SEC = 900;
+
+/**
+ * Єдине форматування тривалості у хвилинах українською (повертає null для <= 0).
+ */
+export function formatOutageDuration(minutes) {
+  const dur = Math.round(Number(minutes) || 0);
+  if (dur <= 0) return null;
+  const h = Math.floor(dur / 60);
+  const m = dur % 60;
+  return h > 0 ? `${h} год ${m > 0 ? `${m} хв` : ''}`.trim() : `${m} хв`;
+}
+
+/**
+ * Пороги > CRITICAL_SHUTDOWN_THRESHOLD працюють за фронтом спаду (startSoc > T -> currentSoc <= T),
+ * тому на старті >= T вважаються вже досягнутими. Поріг 10% спрацьовує завжди (level-triggered).
+ */
+export function computeInitialNotifiedLevels(startSoc, thresholds = NOTIFICATION_THRESHOLDS) {
+  const soc = Number.isFinite(startSoc) ? startSoc : 100;
+  return thresholds.filter(t => t > CRITICAL_SHUTDOWN_THRESHOLD && t >= soc);
+}
+
+/**
+ * Повертає пороги, перетнуті станом на поточний заряд АКБ і ще не надіслані в межах цієї події.
+ */
+export function findReachedThresholds(currentSoc, notifiedLevels = [], thresholds = NOTIFICATION_THRESHOLDS) {
+  return thresholds.filter(t => currentSoc <= t && !notifiedLevels.includes(t));
+}
+
+/**
+ * Визначає, чи поточна телеметрія є заглушкою помилки хмари Deye (не достовірним станом мережі).
+ */
+export function isUnreliableCloudErrorTelemetry(data) {
+  if (!data || typeof data !== 'object') return true;
+  if (data.system_state === 'CLOUD_ERROR') return true;
+  return typeof data.offline_type === 'string' && data.offline_type.startsWith('CLOUD_');
+}
+
+/**
+ * Перевіряє, чи остання завершена подія з журналу відповідає активному відключенню в state.
+ */
+export function isMatchingCompletedEvent(event, state, nowSec) {
+  if (!event || !(Number(event.durationMin) > 0)) return false;
+  const hasEnd = typeof event.endTimestampSec === 'number';
+  const hasStart = typeof event.startTimestampSec === 'number';
+  if (!hasStart && !hasEnd) return true;
+
+  const stateStart = state?.outageStartTimestampSec;
+  if (hasEnd && typeof stateStart === 'number') {
+    return event.endTimestampSec >= stateStart - 300 && (nowSec - event.endTimestampSec) <= EVENT_MATCH_TOLERANCE_SEC;
+  }
+  if (hasStart && typeof stateStart === 'number') {
+    return Math.abs(event.startTimestampSec - stateStart) <= EVENT_MATCH_TOLERANCE_SEC;
+  }
+  return true;
+}
+
+/**
+ * Визначає точну тривалість завершеного відключення (з релевантного запису журналу або за стінним часом).
+ */
+export function resolveRestoredOutageDurationMin(data, state, nowSec) {
+  const events = data?.journal?.validEvents;
+  const lastCompletedEvent = Array.isArray(events) && events.length > 0 ? events[events.length - 1] : null;
+  if (isMatchingCompletedEvent(lastCompletedEvent, state, nowSec)) {
+    return Number(lastCompletedEvent.durationMin);
+  }
+  if (state?.outageStartTimestampSec) {
+    return Math.max(1, Math.round((nowSec - state.outageStartTimestampSec) / 60));
+  }
+  return 0;
+}
 
 /**
  * Відправка повідомлення в Telegram Bot API
@@ -47,17 +120,16 @@ export async function sendTelegramMessage(botToken, chatId, text) {
 /**
  * Форматування повідомлення про поріг розряду батареї
  */
-export function formatThresholdMessage(threshold, data) {
+export function formatThresholdMessage(threshold, data, elapsedOutageMin = null) {
   const soc = data.battery_soc ?? threshold;
   const estHours = data.est_hours_formatted || '--';
   const estUntil = data.est_time_until || '--';
   const useKw = Number(data.use_power_kw || 0).toFixed(1);
   const outage = data.current_outage;
-  const durStr = outage && outage.durationMin > 0
-    ? (outage.durationMin >= 60 
-        ? `${Math.floor(outage.durationMin / 60)} год ${outage.durationMin % 60 ? `${outage.durationMin % 60} хв` : ''}`.trim()
-        : `${outage.durationMin} хв`)
-    : 'щойно';
+  const rawDurMin = (outage && Number(outage.durationMin) > 0)
+    ? Number(outage.durationMin)
+    : Number(elapsedOutageMin || 0);
+  const durStr = formatOutageDuration(rawDurMin) || 'щойно';
 
   const icon = threshold === 40 ? '🛗' : (threshold <= 10 ? '🚨' : (threshold <= 20 ? '⚠️' : (threshold <= 50 ? '🪫' : '🔋')));
 
@@ -87,12 +159,7 @@ export function formatRestorationMessage(data, previousOutageDurMin) {
   const soc = data.battery_soc ?? 100;
   const useKw = Number(data.use_power_kw || 0).toFixed(1);
   const chargeKw = Number(data.charge_power_kw || 0).toFixed(1);
-
-  const durStr = previousOutageDurMin && previousOutageDurMin > 0
-    ? (previousOutageDurMin >= 60 
-        ? `${Math.floor(previousOutageDurMin / 60)} год ${previousOutageDurMin % 60 ? `${previousOutageDurMin % 60} хв` : ''}`.trim()
-        : `${previousOutageDurMin} хв`)
-    : null;
+  const durStr = formatOutageDuration(previousOutageDurMin);
 
   return `🟢 <b>Міську електромережу відновлено!</b>
 
@@ -130,6 +197,10 @@ export async function processTelegramNotifications(data, env) {
 
   if (!botToken || !chatId) {
     return { notified: false, reason: 'missing_credentials' };
+  }
+
+  if (isUnreliableCloudErrorTelemetry(data)) {
+    return { notified: false, reason: 'cloud_error' };
   }
 
   return withKvSerialization(kv, async () => {
@@ -189,19 +260,24 @@ export async function processTelegramNotifications(data, env) {
         state.outageStart = data.current_outage?.start || data.updated_at || null;
         state.outageStartTimestampSec = data.current_outage?.startTimestampSec || nowUtcSec();
         state.outageStartSoc = currentSoc;
-        state.notifiedLevels = NOTIFICATION_THRESHOLDS.filter(t => t > currentSoc);
+        state.notifiedLevels = computeInitialNotifiedLevels(currentSoc);
         state.sentAlerts = [];
         state.lastNotifiedThreshold = null;
         stateChanged = true;
+      } else if (!state.outageStart && data.current_outage?.startTimestampSec) {
+        state.outageStart = data.current_outage.start || state.outageStart;
+        state.outageStartTimestampSec = data.current_outage.startTimestampSec;
+        stateChanged = true;
       }
 
-      const reachedThresholds = NOTIFICATION_THRESHOLDS.filter(
-        t => currentSoc <= t && !state.notifiedLevels.includes(t)
-      );
+      const reachedThresholds = findReachedThresholds(currentSoc, state.notifiedLevels);
 
       if (reachedThresholds.length > 0) {
         const targetThreshold = reachedThresholds[reachedThresholds.length - 1];
-        const msg = formatThresholdMessage(targetThreshold, data);
+        const elapsedMin = state.outageStartTimestampSec
+          ? Math.max(0, Math.round((nowUtcSec() - state.outageStartTimestampSec) / 60))
+          : null;
+        const msg = formatThresholdMessage(targetThreshold, data, elapsedMin);
         const sent = await sendTelegramMessage(botToken, chatId, msg);
         if (sent) {
           for (const t of reachedThresholds) {
@@ -227,17 +303,10 @@ export async function processTelegramNotifications(data, env) {
       const isDuplicateRestore = Boolean(
         outageKey &&
         state.lastRestoredOutageKey === outageKey &&
-        (nowSec - (state.lastRestorationSentSec || 0)) < 300
+        (nowSec - (state.lastRestorationSentSec || 0)) < RESTORATION_DEDUP_WINDOW_SEC
       );
 
-      const lastCompletedEvent = data.journal?.validEvents?.[data.journal.validEvents.length - 1];
-      let durMin = (lastCompletedEvent && Number(lastCompletedEvent.durationMin) > 0)
-        ? Number(lastCompletedEvent.durationMin)
-        : 0;
-
-      if (!durMin && state.outageStartTimestampSec) {
-        durMin = Math.max(1, Math.round((nowSec - state.outageStartTimestampSec) / 60));
-      }
+      const durMin = resolveRestoredOutageDurationMin(data, state, nowSec);
 
       // Спочатку фіксуємо скидання стану в KV, і лише потім шлемо повідомлення (запобігає гонці/дублям)
       state.isOutage = false;
