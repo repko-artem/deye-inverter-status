@@ -32,7 +32,7 @@ async function resolveTelemetry(env, ctx, isBypass = false) {
   };
 
   if (isBypass) {
-    const data = await runLocalFetch(true);
+    const data = await runLocalFetch(false);
     return { data, isStale: false, source: 'bypass' };
   }
 

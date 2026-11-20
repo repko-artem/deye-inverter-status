@@ -72,7 +72,8 @@ export const CONFIG = {
     TTL_MS: 60 * 1000,               // TTL кешу телеметрії (60 сек)
     EDGE_TTL_SEC: 45,                // TTL Edge CDN для свіжих відповідей (сек)
     SWR_MAX_AGE_MS: 3 * 60 * 1000,   // Макс. вік снепшоту для миттєвої видачі (Stale-While-Revalidate, 3 хв)
-    SNAPSHOT_KV_INTERVAL_MS: 4 * 60 * 1000, // Мін. інтервал запису telemetry_snapshot у KV (4 хв -> <= 360 записів/добу, ліміт Free: 1000/добу)
+    SNAPSHOT_KV_INTERVAL_MS: 15 * 60 * 1000, // Мін. інтервал фонового запису telemetry_snapshot у KV (15 хв -> <= 96 записів/добу)
+    SNAPSHOT_KV_SOC_STEP: 5,         // Поріг зміни заряду АКБ (%) для позачергового оновлення KV-снепшоту
     HISTORY_DAYS: 7,                 // Глибина історії відключень для графіків (днів)
     ARCHIVE_DAYS: 30,                // Глибина архіву подій для модального списку (днів)
     ARCHIVE_TTL_MS: 120 * 1000,      // TTL кешу готової відповіді /api/archive у пам'яті та CDN (2 хв)

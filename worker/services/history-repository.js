@@ -369,13 +369,14 @@ export class HistoryRepository {
         kvMeta = this.cache.getKvSnapshotMeta();
       }
 
-      const minIntervalMs = this.config.CACHE?.SNAPSHOT_KV_INTERVAL_MS ?? (4 * 60 * 1000);
+      const minIntervalMs = this.config.CACHE?.SNAPSHOT_KV_INTERVAL_MS ?? (15 * 60 * 1000);
+      const socStep = this.config.CACHE?.SNAPSHOT_KV_SOC_STEP ?? 5;
       const elapsedMs = timestamp - (kvMeta?.timestamp || 0);
       const stateChanged = Boolean(kvMeta?.systemState && kvMeta.systemState !== data.system_state);
       const socChanged = Boolean(
         typeof kvMeta?.batterySoc === 'number' &&
         typeof data.battery_soc === 'number' &&
-        kvMeta.batterySoc !== data.battery_soc
+        Math.abs(data.battery_soc - kvMeta.batterySoc) >= socStep
       );
       const shouldWriteSnapshot = Boolean(force) || !kvMeta?.timestamp || elapsedMs >= minIntervalMs || stateChanged || socChanged;
 

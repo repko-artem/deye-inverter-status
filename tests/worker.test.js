@@ -1104,35 +1104,29 @@ describe('Worker Performance Optimization (KV Caching, SWR & HEAD Requests)', ()
       const kv = createMockKV({
         history_past_days: JSON.stringify(preCachedPast),
         telemetry_snapshot: JSON.stringify({
-          timestamp: Date.now() - 2 * 60 * 1000, // Only 2 min ago (< 20m interval)
-          data: { system_state: 'GRID_STANDBY' }
+          timestamp: Date.now() - 2 * 60 * 1000, // Only 2 min ago (< 15m interval)
+          data: { system_state: 'GRID_CHARGING', battery_soc: 80 }
         })
       });
 
-      let gridOnMode = true;
+      let mockDisplay = {
+        batterySoc: 82, // +2% (< 5% step) in same GRID_CHARGING state
+        batteryBv: 650.0,
+        gridRelayStatus: 'on',
+        wirePower: 9000,
+        batteryPower: -5000,
+        batteryStatus: 'CHARGE',
+        usePower: 4000,
+        networkStatus: 'NORMAL'
+      };
       globalThis.fetch = async (url) => {
         const urlStr = String(url);
         if (urlStr.includes('/maintain-s/station/display/')) {
           return {
             ok: true,
             status: 200,
-            text: async () => JSON.stringify(gridOnMode ? {
-              batterySoc: 100,
-              batteryBv: 652.0,
-              gridRelayStatus: 'on',
-              wirePower: 4500,
-              batteryPower: 0,
-              usePower: 4000,
-              networkStatus: 'NORMAL',
-              lastUpdateTime: Math.floor(Date.now() / 1000)
-            } : {
-              batterySoc: 98,
-              batteryBv: 645.0,
-              gridRelayStatus: 'off',
-              wirePower: 0,
-              batteryPower: 7500,
-              usePower: 7500,
-              networkStatus: 'NORMAL',
+            text: async () => JSON.stringify({
+              ...mockDisplay,
               lastUpdateTime: Math.floor(Date.now() / 1000)
             })
           };
@@ -1147,10 +1141,10 @@ describe('Worker Performance Optimization (KV Caching, SWR & HEAD Requests)', ()
         NOTIFY_KV: kv
       };
 
-      // 1. Steady-state GRID_ON within 20m -> must SKIP telemetry_snapshot kv.put
+      // 1. Small SOC change (+2% < 5% step) within 15m in same state -> must SKIP telemetry_snapshot kv.put
       await getFreshTelemetry(env);
       let snapshotWrites = kv.calls.filter(c => c.op === 'put' && c.key === 'telemetry_snapshot').length;
-      assert.equal(snapshotWrites, 0, 'Must skip KV snapshot write within SNAPSHOT_KV_INTERVAL_MS when state unchanged');
+      assert.equal(snapshotWrites, 0, 'Must skip KV snapshot write when SOC delta < SNAPSHOT_KV_SOC_STEP (5%) and state unchanged');
 
       // 2. Repeated poll on warm isolate -> still skips KV write AND skips extra KV read
       const readsBefore = kv.calls.filter(c => c.op === 'get' && c.key === 'telemetry_snapshot').length;
@@ -1160,11 +1154,26 @@ describe('Worker Performance Optimization (KV Caching, SWR & HEAD Requests)', ()
       assert.equal(snapshotWrites, 0, 'Repeated warm poll must still skip KV snapshot write');
       assert.equal(readsAfter, readsBefore, 'Warm isolate must not re-read telemetry_snapshot from KV');
 
-      // 3. State transition GRID_ON -> OUTAGE -> must write telemetry_snapshot immediately
-      gridOnMode = false;
+      // 3. Large SOC delta (>= 5%: 80% -> 85%) in same state -> must write telemetry_snapshot
+      mockDisplay = { ...mockDisplay, batterySoc: 85 };
       await getFreshTelemetry(env);
       snapshotWrites = kv.calls.filter(c => c.op === 'put' && c.key === 'telemetry_snapshot').length;
-      assert.equal(snapshotWrites, 1, 'Must immediately persist telemetry_snapshot on system_state transition');
+      assert.equal(snapshotWrites, 1, 'Must persist telemetry_snapshot when battery SOC changes by >= 5%');
+
+      // 4. State transition GRID_CHARGING -> BLACKOUT_BATTERY (even 1% diff: 85% -> 84%) -> must write immediately
+      mockDisplay = {
+        batterySoc: 84,
+        batteryBv: 645.0,
+        gridRelayStatus: 'off',
+        wirePower: 0,
+        batteryPower: 7500,
+        batteryStatus: 'DISCHARGE',
+        usePower: 7500,
+        networkStatus: 'NORMAL'
+      };
+      await getFreshTelemetry(env);
+      snapshotWrites = kv.calls.filter(c => c.op === 'put' && c.key === 'telemetry_snapshot').length;
+      assert.equal(snapshotWrites, 2, 'Must immediately persist telemetry_snapshot on system_state transition');
     } finally {
       globalThis.fetch = originalFetch;
       globalCache.clear();
@@ -1948,9 +1957,16 @@ describe('Monotonic Cache-Aside & SWR Refresh Policy', () => {
         return new Response(JSON.stringify({ records: [] }), { status: 200 });
       };
 
+      const kv = createMockKV({
+        telemetry_snapshot: JSON.stringify({
+          timestamp: Date.now() - 60 * 1000,
+          data: { system_state: 'GRID_STANDBY', battery_soc: 92 }
+        })
+      });
+
       const bgPromises = [];
       const ctx = { waitUntil(p) { bgPromises.push(p); } };
-      const env = { DEYE_TOKEN: 't', DEYE_STATION_ID: 's' };
+      const env = { DEYE_TOKEN: 't', DEYE_STATION_ID: 's', NOTIFY_KV: kv };
 
       const res = await worker.fetch(new Request('https://power.osbbnd.workers.dev/?fresh=1'), env, ctx);
       assert.equal(res.status, 200);
@@ -1963,6 +1979,8 @@ describe('Monotonic Cache-Aside & SWR Refresh Policy', () => {
         url: 'https://power.osbbnd.workers.dev/',
         cacheControl: 'public, max-age=0, s-maxage=45, must-revalidate'
       }], '?fresh=1 must overwrite canonical caches.default entry');
+      const kvSnapshotPuts = kv.calls.filter(c => c.op === 'put' && c.key === 'telemetry_snapshot').length;
+      assert.equal(kvSnapshotPuts, 0, '?fresh=1 must NOT force extra KV telemetry_snapshot write within throttle window');
     } finally {
       globalThis.fetch = originalFetch;
       globalThis.caches = originalCaches;
